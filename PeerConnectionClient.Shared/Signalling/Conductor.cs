@@ -15,13 +15,25 @@ using System.Collections.Generic;
 using Windows.Networking.Connectivity;
 using Windows.Networking;
 using Windows.Data.Json;
-using webrtc_winrt_api;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using PeerConnectionClient.Model;
+using PeerConnectionClient.Media_Extension;
+using PeerConnectionClient.ViewModels;
+using PeerConnectionClient.Win10.Shared;
 using System.Collections.ObjectModel;
 using PeerConnectionClient.Utilities;
 using System.Threading;
+using System.Text.RegularExpressions;
+#ifdef ORTCLIB
+using org.ortc;
+using org.ortc.adapter;
+using RTCRtpCodecCapability = org.ortc.RTCRtpCodecCapability;
+using RTCIceCandidate = org.ortc.adapter.RTCIceCandidate;
+#else
+using webrtc_winrt_api;
+using RTCRtpCodecCapability = CodecInfo;
+#endif
 
 namespace PeerConnectionClient.Signalling
 {
@@ -30,10 +42,12 @@ namespace PeerConnectionClient.Signalling
     /// </summary>
     internal class Conductor
     {
-        private static Object _instanceLock = new Object();
-        private Object _mediaLock = new object();
+        private static readonly object _instanceLock = new object();
+        private readonly object _mediaLock = new object();
         private static Conductor _instance;
-
+#ifdef ORTCLIB
+        private RTCPeerConnectionSignalingMode _signalingMode;
+#endif
         /// <summary>
         ///  The single instance of the Conductor class.
         /// </summary>
@@ -61,13 +75,7 @@ namespace PeerConnectionClient.Signalling
         /// The signaller property.
         /// Helps to pass WebRTC session signals between client and server.
         /// </summary>
-        public Signaller Signaller
-        {
-            get
-            {
-                return _signaller;
-            }
-        }
+        public Signaller Signaller => _signaller;
         
         /// <summary>
         /// Video codec used in WebRTC session.
@@ -79,13 +87,6 @@ namespace PeerConnectionClient.Signalling
         /// </summary>
         public CodecInfo AudioCodec { get; set; }
         public CaptureCapability VideoCaptureProfile;
-        /// <summary>
-        /// Video frames per second property.
-        /// </summary>
-
-        /// <summary>
-        /// Video resolution property.
-        /// </summary>
 
         // SDP negotiation attributes
         private static readonly string kCandidateSdpMidName = "sdpMid";
@@ -93,20 +94,20 @@ namespace PeerConnectionClient.Signalling
         private static readonly string kCandidateSdpName = "candidate";
         private static readonly string kSessionDescriptionTypeName = "type";
         private static readonly string kSessionDescriptionSdpName = "sdp";
-
+#ifdef ORTCLIB        
+		private static readonly string kSessionDescriptionJsonName = "session";
+		
+        public ObservableCollection<Peer> Peers;
+        public Peer Peer;
+		protected String _sessionId;
+#endif
         RTCPeerConnection _peerConnection;
-        Media _media;
+        readonly Media _media;
 
         /// <summary>
         /// Media property to provide media details.
         /// </summary>
-        public Media Media
-        {
-            get
-            {
-                return _media;
-            }
-        }
+        public Media Media => _media;
 
         MediaStream _mediaStream;
         List<RTCIceServer> _iceServers;
@@ -177,8 +178,12 @@ namespace PeerConnectionClient.Signalling
         {
           if (VideoCaptureProfile != null)
           {
+#ifdef ORTCLIB
+    		_media.SetPreferredVideoCaptureFormat((int)VideoCaptureProfile.Width, (int)VideoCaptureProfile.Height, (int)VideoCaptureProfile.FrameRate);
+#else
             webrtc_winrt_api.WebRTC.SetPreferredVideoCaptureFormat(
               (int)VideoCaptureProfile.Width, (int)VideoCaptureProfile.Height, (int)VideoCaptureProfile.FrameRate);
+#endif
           }
         }
 
@@ -193,14 +198,25 @@ namespace PeerConnectionClient.Signalling
             {
                 return false;
             }
-            
+#ifdef ORTCLIB
+			var config = new RTCConfiguration()
+            {
+                BundlePolicy = RTCPeerConnectionSignalingMode.Json == _signalingMode ? RTCBundlePolicy.MaxBundle : RTCBundlePolicy.MaxBundle,
+                SignalingMode = _signalingMode,//RTCSessionDescriptionSignalingType.Json,
+                //IceTransportPolicy = RTCIceTransportPolicy.All,
+                GatherOptions = new RTCIceGatherOptions()
+                { 
+                    IceServers = new List<RTCIceServer>(_iceServers),
+                }
+            };
+#else            
             var config = new RTCConfiguration()
             {
                 BundlePolicy = RTCBundlePolicy.Balanced,
                 IceTransportPolicy = RTCIceTransportPolicy.All,
                 IceServers = _iceServers
             };
-
+#endif
             Debug.WriteLine("Conductor: Creating peer connection.");
             _peerConnection = new RTCPeerConnection(config);
             _peerConnection.EtwStatsEnabled = _etwStatsEnabled;
@@ -210,42 +226,81 @@ namespace PeerConnectionClient.Signalling
                 return false;
             }
             
-            if (OnPeerConnectionCreated != null)
-            {
-                OnPeerConnectionCreated();
-            }
+            if (_peerConnection == null)
+                throw new NullReferenceException("Peer connection is not created.");
+
+            OrtcStatsManager.Instance.Initialize(_peerConnection);
+ 
+
+            OnPeerConnectionCreated?.Invoke();
 
             _peerConnection.OnIceCandidate += PeerConnection_OnIceCandidate;
-            _peerConnection.OnAddStream += PeerConnection_OnAddStream;
+#ifdef ORTCLIB 
+			_peerConnection.OnTrack += PeerConnection_OnAddTrack;
+            _peerConnection.OnTrackGone += PeerConnection_OnRemoveTrack;
+            _peerConnection.OnIceConnectionStateChange += () => { Debug.WriteLine("Conductor: Ice connection state change, state=" + (null != _peerConnection ? _peerConnection.IceConnectionState.ToString() : "closed")); };           
+#else
+			_peerConnection.OnAddStream += PeerConnection_OnAddStream;
             _peerConnection.OnRemoveStream += PeerConnection_OnRemoveStream;
             _peerConnection.OnConnectionHealthStats += PeerConnection_OnConnectionHealthStats;
-
+#endif      
             Debug.WriteLine("Conductor: Getting user media.");
-            RTCMediaStreamConstraints mediaStreamConstraints = new RTCMediaStreamConstraints();
-
+            RTCMediaStreamConstraints mediaStreamConstraints = new RTCMediaStreamConstraints
+            {
             // Always include audio/video enabled in the media stream,
             // so it will be possible to enable/disable audio/video if 
             // the call was initiated without microphone/camera
-            mediaStreamConstraints.audioEnabled = true;
-            mediaStreamConstraints.videoEnabled = true;
+                audioEnabled = true,
+                videoEnabled = true
+            };
+
+            
 
             if (cancelationToken.IsCancellationRequested)
             {
                 return false;
             }
+#ifdef ORTCLIB
+			var tracks = await _media.GetUserMedia(mediaStreamConstraints);
+            if (tracks != null)
+            {
+                RTCRtpCapabilities audioCapabilities = RTCRtpSender.GetCapabilities("audio");
+                RTCRtpCapabilities videoCapabilities = RTCRtpSender.GetCapabilities("video");
 
+                MediaStream = new MediaStream(tracks);
+                Debug.WriteLine("Conductor: Adding local media stream.");
+                IList<MediaStream> mediaStreamList = new List<MediaStream>();
+                mediaStreamList.Add(MediaStream);
+                foreach (var mediaStreamTrack in tracks)
+                {
+                    //Create stream track configuration based on capabilities
+                    RTCMediaStreamTrackConfiguration configuration = null;
+                    if (mediaStreamTrack.Kind == MediaStreamTrackKind.Audio && audioCapabilities != null)
+                    {
+                        configuration =
+                            await Helper.GetTrackConfigurationForCapabilities(audioCapabilities, AudioCodec);
+                    }
+                    else if (mediaStreamTrack.Kind == MediaStreamTrackKind.Video && videoCapabilities != null)
+                    {
+                        configuration =
+                            await Helper.GetTrackConfigurationForCapabilities(videoCapabilities, VideoCodec);
+                    }
+                    if (configuration != null)
+                        _peerConnection.AddTrack(mediaStreamTrack, mediaStreamList, configuration);
+                }
+            }
+#else
             _mediaStream = await _media.GetUserMedia(mediaStreamConstraints);
+#endif
             if (cancelationToken.IsCancellationRequested)
             {
                 return false;
             }
-
+#ifndef ORTCLIB
             Debug.WriteLine("Conductor: Adding local media stream.");
             _peerConnection.AddStream(_mediaStream);
-            if (OnAddLocalStream != null)
-            {
-                OnAddLocalStream(new MediaStreamEvent() { Stream = _mediaStream });
-            }
+#endif
+            OnAddLocalStream?.Invoke(new MediaStreamEvent() { Stream = _mediaStream });
 
             if (cancelationToken.IsCancellationRequested)
             {
@@ -274,18 +329,17 @@ namespace PeerConnectionClient.Signalling
                     }
                     _mediaStream = null;
 
-                    if (OnPeerConnectionClosed != null)
-                    {
-                        OnPeerConnectionClosed();
-                    }
+                    OnPeerConnectionClosed?.Invoke();
 
                     _peerConnection.Close(); // Slow, so do this after UI updated and camera turned off
+#ifdef ORTCLIB                    
+					_sessionId = null;
+                    OrtcStatsManager.Instance.CallEnded();
+#endif
+                        //StatsManager.Instance.TrackCallEnded();
                     _peerConnection = null;
 
-                    if (OnReadyToConnect != null)
-                    {
-                        OnReadyToConnect();
-                    }
+                    OnReadyToConnect?.Invoke();
 
                     GC.Collect(); // Ensure all references are truly dropped.
                 }
@@ -303,30 +357,58 @@ namespace PeerConnectionClient.Signalling
             {
                 return;
             }
-
-            var json = new JsonObject
+			JsonObject json;
+#ifdef ORTCLIB
+			if (RTCPeerConnectionSignalingMode.Json == _signalingMode)
             {
-                {kCandidateSdpMidName, JsonValue.CreateStringValue(evt.Candidate.SdpMid)},
-                {kCandidateSdpMlineIndexName, JsonValue.CreateNumberValue(evt.Candidate.SdpMLineIndex)},
-                {kCandidateSdpName, JsonValue.CreateStringValue(evt.Candidate.Candidate)}
-            };
+                message = evt.Candidate.ToJsonString();
+                json = JsonObject.Parse(message);
+            }
+            else
+#endif
+            {
+				double index = null != evt.Candidate.SdpMLineIndex ? (double) evt.Candidate.SdpMLineIndex : -1;
+
+	            json = new JsonObject
+	            {
+	                {kCandidateSdpMidName, JsonValue.CreateStringValue(evt.Candidate.SdpMid)},
+	                {kCandidateSdpMlineIndexName, JsonValue.CreateNumberValue(index)},
+	                {kCandidateSdpName, JsonValue.CreateStringValue(evt.Candidate.Candidate)}
+	            };
+			}
             Debug.WriteLine("Conductor: Sending ice candidate.\n" + json.Stringify());
             SendMessage(json);
         }
 
+#ifdef ORTCLIB
+		/// <summary>
+        /// Invoked when the remote peer added a media track to the peer connection.
+        /// </summary>
+        public event Action<RTCTrackEvent> OnAddRemoteTrack;
+        private void PeerConnection_OnAddTrack(RTCTrackEvent evt)
+        {
+            OnAddRemoteTrack?.Invoke(evt);
+        }
+
+		/// <summary>
+        /// Invoked when the remote peer removed a media track from the peer connection.
+        /// </summary>
+        public event Action<RTCTrackEvent> OnRemoveTrack;
+        private void PeerConnection_OnRemoveTrack(RTCTrackEvent evt)
+        {
+            OnRemoveTrack?.Invoke(evt);
+        }
+#else
         /// <summary>
         /// Invoked when the remote peer added a media stream to the peer connection.
         /// </summary>
         public event Action<MediaStreamEvent> OnAddRemoteStream;
         private void PeerConnection_OnAddStream(MediaStreamEvent evt)
         {
-            if (OnAddRemoteStream != null)
-            {
-                OnAddRemoteStream(evt);
-            }
+			OnAddRemoteStream?.Invoke(evt);
         }
 
-        /// <summary>
+		/// <summary>
         /// Invoked when the remote peer removed a media stream from the peer connection.
         /// </summary>
         public event Action<MediaStreamEvent> OnRemoveRemoteStream;
@@ -337,6 +419,9 @@ namespace PeerConnectionClient.Signalling
                 OnRemoveRemoteStream(evt);
             }
         }
+#endif
+
+        
 
         /// <summary>
         /// Invoked when new connection health stats are available.
@@ -345,10 +430,7 @@ namespace PeerConnectionClient.Signalling
         public event Action<RTCPeerConnectionHealthStats> OnConnectionHealthStats;
         private void PeerConnection_OnConnectionHealthStats(RTCPeerConnectionHealthStats stats)
         {
-            if (OnConnectionHealthStats != null)
-            {
-                OnConnectionHealthStats(stats);
-            }
+            OnConnectionHealthStats?.Invoke(stats);
         }
 
         /// <summary>
@@ -373,10 +455,10 @@ namespace PeerConnectionClient.Signalling
         /// <summary>
         /// Handler for Signaller's OnPeerHangup event.
         /// </summary>
-        /// <param name="peer_id">ID of the peer to hung up the call with.</param>
-        void Signaller_OnPeerHangup(int peer_id)
+        /// <param name="peerId">ID of the peer to hung up the call with.</param>
+        void Signaller_OnPeerHangup(int peerId)
         {
-            if (peer_id == _peerId)
+            if (peerId == _peerId)
             {
                 Debug.WriteLine("Conductor: Our peer hung up.");
                 ClosePeerConnection();
@@ -401,11 +483,11 @@ namespace PeerConnectionClient.Signalling
         /// <summary>
         /// Handler for Signaller's OnPeerDisconnected event.
         /// </summary>
-        /// <param name="peer_id">ID of disconnected peer.</param>
-        private void Signaller_OnPeerDisconnected(int peer_id)
+        /// <param name="peerId">ID of disconnected peer.</param>
+        private void Signaller_OnPeerDisconnected(int peerId)
         {
             // is the same peer or peer_id does not exist (0) in case of 500 Error
-            if (peer_id == _peerId || peer_id == 0)
+            if (peerId == _peerId || peerId == 0)
             {
                 Debug.WriteLine("Conductor: Our peer disconnected.");
                 ClosePeerConnection();
@@ -421,11 +503,162 @@ namespace PeerConnectionClient.Signalling
         {
         }
 
-        /// <summary>
+#ifdef ORTCLIB
+/// <summary>
         /// Handler for Signaller's OnMessageFromPeer event.
         /// </summary>
         /// <param name="peerId">ID of the peer.</param>
         /// <param name="message">Message from the peer.</param>
+        private void Signaller_OnMessageFromPeer(int peerId, string message)
+        {
+            Task.Run(async () =>
+            {
+                Debug.Assert(_peerId == peerId || _peerId == -1);
+                Debug.Assert(message.Length > 0);
+                
+                if (_peerId != peerId && _peerId != -1)
+                {
+                    Debug.WriteLine("[Error] Conductor: Received a message from unknown peer while already in a conversation with a different peer.");
+                    return;
+                }
+
+                JsonObject jMessage;
+                if (!JsonObject.TryParse(message, out jMessage))
+                {
+                    Debug.WriteLine("[Error] Conductor: Received unknown message." + message);
+                    return;
+                }
+
+                string type = jMessage.ContainsKey(kSessionDescriptionTypeName) ? jMessage.GetNamedString(kSessionDescriptionTypeName) : null;
+
+                bool created = false;
+
+                if (_peerConnection == null)
+                {
+                    if (!String.IsNullOrEmpty(type))
+                    {
+                        // Create the peer connection only when call is
+                        // about to get initiated. Otherwise ignore the
+                        // messages from peers which could be a result
+                        // of old (but not yet fully closed) connections.
+                        if (type == "offer" || type == "answer" || type == "json")
+                        {
+                            Debug.Assert(_peerId == -1);
+                            _peerId = peerId;
+
+                            created = true;
+
+                            IEnumerable<Peer> enumerablePeer = Peers.Where(x => x.Id == peerId);
+                            Peer = enumerablePeer.First();
+                            _signalingMode = Helper.SignalingModeForClientName(Peer.Name);
+
+                            connectToPeerCancelationTokenSource = new CancellationTokenSource();
+                            connectToPeerTask = CreatePeerConnection(connectToPeerCancelationTokenSource.Token);
+                            bool connectResult = await connectToPeerTask;
+                            connectToPeerTask = null;
+                            connectToPeerCancelationTokenSource.Dispose();
+                            if (!connectResult)
+                            {
+                                Debug.WriteLine("[Error] Conductor: Failed to initialize our PeerConnection instance");
+                                await Signaller.SignOut();
+                                return;
+                            }
+                            else if (_peerId != peerId)
+                            {
+                                Debug.WriteLine("[Error] Conductor: Received a message from unknown peer while already in a conversation with a different peer.");
+                                return;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Debug.WriteLine("[Warn] Conductor: Received an untyped message after closing peer connection.");
+                        return;
+                    }
+                }
+
+                if (!String.IsNullOrEmpty(type))
+                {
+                    if (type == "offer-loopback")
+                    {
+                        // Loopback not supported
+                        Debug.Assert(false);
+                    }
+
+                    string formatted = null;
+
+                    if (jMessage.ContainsKey(kSessionDescriptionJsonName))
+                    {
+                        var containerObject = new JsonObject { { kSessionDescriptionJsonName, jMessage.GetNamedObject(kSessionDescriptionJsonName) } };
+                        formatted = containerObject.Stringify();
+                    }
+                    else if (jMessage.ContainsKey(kSessionDescriptionSdpName))
+                    {
+                        formatted = jMessage.GetNamedString(kSessionDescriptionSdpName);
+                    }
+
+                    if (String.IsNullOrEmpty(formatted))
+                    {
+                        Debug.WriteLine("[Error] Conductor: Can't parse received session description message.");
+                        return;
+                    }
+
+                    RTCSessionDescriptionSignalingType messageType = RTCSessionDescriptionSignalingType.SdpOffer;
+                    switch (type)
+                    {
+                        case "json": messageType = RTCSessionDescriptionSignalingType.Json; break;
+                        case "offer": messageType = RTCSessionDescriptionSignalingType.SdpOffer; break;
+                        case "answer": messageType = RTCSessionDescriptionSignalingType.SdpAnswer; break;
+                        case "pranswer": messageType = RTCSessionDescriptionSignalingType.SdpPranswer; break;
+                        default: Debug.Assert(false, type); break;
+                    }
+
+                    Debug.WriteLine("Conductor: Received session description: " + messageType.ToString() + "\n" + formatted);
+                    if (_peerConnection != null)
+                    {
+                        await _peerConnection.SetRemoteDescription(new RTCSessionDescription(messageType, formatted));
+
+                        if ((messageType == RTCSessionDescriptionSignalingType.SdpOffer) ||
+                            ((created) &&
+                             (messageType == RTCSessionDescriptionSignalingType.Json)))
+                        {
+                            var answer = await _peerConnection.CreateAnswer();
+                            await _peerConnection.SetLocalDescription(answer);
+                            // Send answer
+                            Debug.WriteLine("Conductor: Sending answer: " + answer.FormattedDescription);
+                            SendSdp(answer);
+                            //if (AppInsightsEnabled)
+                                OrtcStatsManager.Instance.StartCallWatch(_sessionId, false);
+                                //StatsManager.Instance.TrackCallStarted();
+                        }
+                    }
+                }
+                else
+                {
+                    RTCIceCandidate candidate = null;
+                    if (RTCPeerConnectionSignalingMode.Json != _signalingMode)
+                    {
+                        var sdpMid = jMessage.ContainsKey(kCandidateSdpMidName) ? jMessage.GetNamedString(kCandidateSdpMidName) : null;
+                        var sdpMlineIndex = jMessage.ContainsKey(kCandidateSdpMlineIndexName) ? jMessage.GetNamedNumber(kCandidateSdpMlineIndexName) : -1;
+                        var sdp = jMessage.ContainsKey(kCandidateSdpName) ? jMessage.GetNamedString(kCandidateSdpName) : null;
+                        if ((String.IsNullOrEmpty(sdpMid) && (sdpMlineIndex == -1)) || String.IsNullOrEmpty(sdp))
+                        {
+                            Debug.WriteLine("[Error] Conductor: Can't parse received message.\n" + message);
+                            return;
+                        }
+                        candidate = String.IsNullOrEmpty(sdpMid) ? RTCIceCandidate.FromSdpStringWithMLineIndex(sdp, (ushort)sdpMlineIndex) : RTCIceCandidate.FromSdpStringWithMid(sdp, sdpMid);
+                    }
+                    else
+                    {
+                        candidate = RTCIceCandidate.FromJsonString(message);
+                    }
+
+                    _peerConnection?.AddIceCandidate(candidate);
+                    Debug.WriteLine("Conductor: Received candidate : " + message);
+                }
+            }).Wait();
+        }
+#else
         private void Signaller_OnMessageFromPeer(int peerId, string message)
         {
             Task.Run(async () =>
@@ -538,7 +771,7 @@ namespace PeerConnectionClient.Signalling
                 }
             }).Wait();
         }
-
+#endif
         /// <summary>
         /// Handler for Signaller's OnDisconnected event handler.
         /// </summary>
@@ -586,6 +819,9 @@ namespace PeerConnectionClient.Signalling
                 Debug.WriteLine("[Error] Conductor: We only support connecting to one peer at a time");
                 return;
             }
+#ifdef ORTCLIB
+			 _signalingMode = Helper.SignalingModeForClientName(peer.Name);
+#endif
             connectToPeerCancelationTokenSource = new System.Threading.CancellationTokenSource();
             connectToPeerTask = CreatePeerConnection(connectToPeerCancelationTokenSource.Token);
             bool connectResult = await connectToPeerTask;
@@ -596,12 +832,12 @@ namespace PeerConnectionClient.Signalling
             {
                 _peerId = peerId;
                 var offer = await _peerConnection.CreateOffer();
-
+#ifndef ORTCLIB
                 // Alter sdp to force usage of selected codecs
                 string newSdp = offer.Sdp;
                 SdpUtils.SelectCodecs(ref newSdp, AudioCodec, VideoCodec);
                 offer.Sdp = newSdp;
-
+#endif
                 await _peerConnection.SetLocalDescription(offer);
                 Debug.WriteLine("Conductor: Sending offer.");
                 SendSdp(offer);
@@ -624,7 +860,11 @@ namespace PeerConnectionClient.Signalling
         private string GetLocalPeerName()
         {
             var hostname = NetworkInformation.GetHostNames().FirstOrDefault(h => h.Type == HostNameType.DomainName);
-            return hostname != null ? hostname.CanonicalName : "<unknown host>";
+            string ret =  hostname?.CanonicalName ?? "<unknown host>";
+#ifdef ORTCLIB
+			ret = ret +"-dual";
+#endif
+			return ret;
         }
 
         /// <summary>
@@ -633,9 +873,55 @@ namespace PeerConnectionClient.Signalling
         /// <param name="description">RTC session description.</param>
         private void SendSdp(RTCSessionDescription description)
         {
+#ifdef ORTCLIB
+			var type = description.Type.ToString().ToLower();
+
+            String formattedDescription = description.FormattedDescription;
+
+            JsonObject json = null;
+            if (description.Type == RTCSessionDescriptionSignalingType.Json)
+            {
+                if (String.IsNullOrEmpty(_sessionId))
+                {
+                    var match = Regex.Match(formattedDescription, "{\"username\":\"-*[a-zA-Z0-9]*\",\"id\":\"([0-9]+)\"");
+                    if (match.Success)
+                    {
+                        _sessionId = match.Groups[1].Value;
+                    }
+                }
+                var jsonDescription = JsonObject.Parse(formattedDescription);
+                var sessionValue = jsonDescription.GetNamedObject(kSessionDescriptionJsonName);
+                json = new JsonObject
+                {
+                    {kSessionDescriptionTypeName, JsonValue.CreateStringValue(type)},
+                    {kSessionDescriptionJsonName,  sessionValue}
+                };
+            }
+            else
+            {
+                var match = Regex.Match(formattedDescription, "o=[^ ]+ ([0-9]+) [0-9]+ [a-zA-Z]+ [a-zA-Z0-9]+ [0-9\\.]+");
+                if (match.Success)
+                {
+                    _sessionId = match.Groups[1].Value;
+                }
+
+                var prefix = type.Substring(0, "sdp".Length);
+                if (prefix == "sdp")
+                {
+                    type = type.Substring("sdp".Length);
+                }
+
+                json = new JsonObject
+                {
+                    {kSessionDescriptionTypeName, JsonValue.CreateStringValue(type)},
+                    {kSessionDescriptionSdpName, JsonValue.CreateStringValue(formattedDescription)}
+                };
+            }
+#else
             var json = new JsonObject();
             json.Add(kSessionDescriptionTypeName, JsonValue.CreateStringValue(description.Type.GetValueOrDefault().ToString().ToLower()));
             json.Add(kSessionDescriptionSdpName, JsonValue.CreateStringValue(description.Sdp));
+#endif
             SendMessage(json);
         }
 
@@ -666,7 +952,7 @@ namespace PeerConnectionClient.Signalling
             {
                 if (_mediaStream != null)
                 {
-                    foreach (MediaVideoTrack videoTrack in _mediaStream.GetVideoTracks())
+                    foreach (var videoTrack in _mediaStream.GetVideoTracks())
                     {
                         videoTrack.Enabled = true;
                     }
@@ -684,7 +970,7 @@ namespace PeerConnectionClient.Signalling
             {
                 if (_mediaStream != null)
                 {
-                    foreach (MediaVideoTrack videoTrack in _mediaStream.GetVideoTracks())
+                    foreach (var videoTrack in _mediaStream.GetVideoTracks())
                     {
                         videoTrack.Enabled = false;
                     }
@@ -702,8 +988,7 @@ namespace PeerConnectionClient.Signalling
             {
                 if (_mediaStream != null)
                 {
-                    var audioTracks = _mediaStream.GetAudioTracks();
-                    foreach (MediaAudioTrack audioTrack in _mediaStream.GetAudioTracks())
+                    foreach (var audioTrack in _mediaStream.GetAudioTracks())
                     {
                         audioTrack.Enabled = false;
                     }
@@ -721,8 +1006,7 @@ namespace PeerConnectionClient.Signalling
             {
                 if (_mediaStream != null)
                 {
-                    var audioTracks = _mediaStream.GetAudioTracks();
-                    foreach (MediaAudioTrack audioTrack in _mediaStream.GetAudioTracks())
+                    foreach (var audioTrack in _mediaStream.GetAudioTracks())
                     {
                         audioTrack.Enabled = true;
                     }
@@ -747,7 +1031,15 @@ namespace PeerConnectionClient.Signalling
                     url = "turn:";
                 }
                 url += iceServer.Host.Value + ":" + iceServer.Port.Value;
-                RTCIceServer server = new RTCIceServer { Url = url };
+#ifdef ORTCLIB 
+				RTCIceServer server = new RTCIceServer()
+                {
+                    Urls = new List<string>(),
+                };
+                server.Urls.Add(url);
+#else               
+				RTCIceServer server = new RTCIceServer { Url = url };
+#endif
                 if (iceServer.Credential != null)
                 {
                     server.Credential = iceServer.Credential;
