@@ -12,7 +12,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
-#ifdef ORTCLIB
+#if ORTCLIB
 	using org.ortc;
 	using CodecInfo=RTCRtpCodecCapability;
 #else
@@ -52,7 +52,7 @@ namespace PeerConnectionClient.Utilities
                         mfdListToErase.Add(mfdMatch.Groups[groupCtr].Captures[captureCtr].Value.TrimStart());
                     }
                 }
-#ifdef ORTCLIB
+#if ORTCLIB
 				if (!mfdListToErase.Remove(audioCodec.PreferredPayloadType.ToString()))
 #else
                 if (!mfdListToErase.Remove(audioCodec.Id.ToString()))
@@ -78,7 +78,7 @@ namespace PeerConnectionClient.Utilities
                         mfdListToErase.Add(mfdMatch.Groups[groupCtr].Captures[captureCtr].Value.TrimStart());
                     }
                 }
-#ifdef ORTCLIB
+#if ORTCLIB
 				if (!mfdListToErase.Remove(videoCodec.PreferredPayloadType.ToString()))
 #else
                 if (!mfdListToErase.Remove(videoCodec.Id.ToString()))
@@ -92,7 +92,7 @@ namespace PeerConnectionClient.Utilities
             {
                 // Alter audio entry
                 Regex audioRegex = new Regex("\r\n(m=audio.*RTP.*?)( .\\d*)+");
-#ifdef ORTCLIB
+#if ORTCLIB
 	sdp = audioRegex.Replace(sdp, "\r\n$1 " + audioCodec.PreferredPayloadType);
 #else                
 	sdp = audioRegex.Replace(sdp, "\r\n$1 " + audioCodec.Id);
@@ -103,7 +103,7 @@ namespace PeerConnectionClient.Utilities
             {
                 // Alter video entry
                 Regex videoRegex = new Regex("\r\n(m=video.*RTP.*?)( .\\d*)+");
-#ifdef ORTCLIB
+#if ORTCLIB
 	sdp = videoRegex.Replace(sdp, "\r\n$1 " + videoCodec.PreferredPayloadType);
 #else                
 	sdp = videoRegex.Replace(sdp, "\r\n$1 " + videoCodec.Id);

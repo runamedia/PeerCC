@@ -25,7 +25,7 @@ using System.Collections.ObjectModel;
 using PeerConnectionClient.Utilities;
 using System.Threading;
 using System.Text.RegularExpressions;
-#ifdef ORTCLIB
+#if ORTCLIB
 using org.ortc;
 using org.ortc.adapter;
 using RTCRtpCodecCapability = org.ortc.RTCRtpCodecCapability;
@@ -45,7 +45,7 @@ namespace PeerConnectionClient.Signalling
         private static readonly object _instanceLock = new object();
         private readonly object _mediaLock = new object();
         private static Conductor _instance;
-#ifdef ORTCLIB
+#if ORTCLIB
         private RTCPeerConnectionSignalingMode _signalingMode;
 #endif
         /// <summary>
@@ -94,7 +94,7 @@ namespace PeerConnectionClient.Signalling
         private static readonly string kCandidateSdpName = "candidate";
         private static readonly string kSessionDescriptionTypeName = "type";
         private static readonly string kSessionDescriptionSdpName = "sdp";
-#ifdef ORTCLIB        
+#if ORTCLIB        
 		private static readonly string kSessionDescriptionJsonName = "session";
 		
         public ObservableCollection<Peer> Peers;
@@ -178,7 +178,7 @@ namespace PeerConnectionClient.Signalling
         {
           if (VideoCaptureProfile != null)
           {
-#ifdef ORTCLIB
+#if ORTCLIB
     		_media.SetPreferredVideoCaptureFormat((int)VideoCaptureProfile.Width, (int)VideoCaptureProfile.Height, (int)VideoCaptureProfile.FrameRate);
 #else
             webrtc_winrt_api.WebRTC.SetPreferredVideoCaptureFormat(
@@ -198,7 +198,7 @@ namespace PeerConnectionClient.Signalling
             {
                 return false;
             }
-#ifdef ORTCLIB
+#if ORTCLIB
 			var config = new RTCConfiguration()
             {
                 BundlePolicy = RTCPeerConnectionSignalingMode.Json == _signalingMode ? RTCBundlePolicy.MaxBundle : RTCBundlePolicy.MaxBundle,
@@ -235,7 +235,7 @@ namespace PeerConnectionClient.Signalling
             OnPeerConnectionCreated?.Invoke();
 
             _peerConnection.OnIceCandidate += PeerConnection_OnIceCandidate;
-#ifdef ORTCLIB 
+#if ORTCLIB 
 			_peerConnection.OnTrack += PeerConnection_OnAddTrack;
             _peerConnection.OnTrackGone += PeerConnection_OnRemoveTrack;
             _peerConnection.OnIceConnectionStateChange += () => { Debug.WriteLine("Conductor: Ice connection state change, state=" + (null != _peerConnection ? _peerConnection.IceConnectionState.ToString() : "closed")); };           
@@ -260,7 +260,7 @@ namespace PeerConnectionClient.Signalling
             {
                 return false;
             }
-#ifdef ORTCLIB
+#if ORTCLIB
 			var tracks = await _media.GetUserMedia(mediaStreamConstraints);
             if (tracks != null)
             {
@@ -296,7 +296,7 @@ namespace PeerConnectionClient.Signalling
             {
                 return false;
             }
-#ifndef ORTCLIB
+#if WEBRTCLIB
             Debug.WriteLine("Conductor: Adding local media stream.");
             _peerConnection.AddStream(_mediaStream);
 #endif
@@ -332,7 +332,7 @@ namespace PeerConnectionClient.Signalling
                     OnPeerConnectionClosed?.Invoke();
 
                     _peerConnection.Close(); // Slow, so do this after UI updated and camera turned off
-#ifdef ORTCLIB                    
+#if ORTCLIB                    
 					_sessionId = null;
                     OrtcStatsManager.Instance.CallEnded();
 #endif
@@ -358,7 +358,7 @@ namespace PeerConnectionClient.Signalling
                 return;
             }
 			JsonObject json;
-#ifdef ORTCLIB
+#if ORTCLIB
 			if (RTCPeerConnectionSignalingMode.Json == _signalingMode)
             {
                 message = evt.Candidate.ToJsonString();
@@ -380,7 +380,7 @@ namespace PeerConnectionClient.Signalling
             SendMessage(json);
         }
 
-#ifdef ORTCLIB
+#if ORTCLIB
 		/// <summary>
         /// Invoked when the remote peer added a media track to the peer connection.
         /// </summary>
@@ -503,7 +503,7 @@ namespace PeerConnectionClient.Signalling
         {
         }
 
-#ifdef ORTCLIB
+#if ORTCLIB
 /// <summary>
         /// Handler for Signaller's OnMessageFromPeer event.
         /// </summary>
@@ -819,7 +819,7 @@ namespace PeerConnectionClient.Signalling
                 Debug.WriteLine("[Error] Conductor: We only support connecting to one peer at a time");
                 return;
             }
-#ifdef ORTCLIB
+#if ORTCLIB
 			 _signalingMode = Helper.SignalingModeForClientName(peer.Name);
 #endif
             connectToPeerCancelationTokenSource = new System.Threading.CancellationTokenSource();
@@ -832,7 +832,7 @@ namespace PeerConnectionClient.Signalling
             {
                 _peerId = peerId;
                 var offer = await _peerConnection.CreateOffer();
-#ifndef ORTCLIB
+#if WEBRTCLIB
                 // Alter sdp to force usage of selected codecs
                 string newSdp = offer.Sdp;
                 SdpUtils.SelectCodecs(ref newSdp, AudioCodec, VideoCodec);
@@ -861,7 +861,7 @@ namespace PeerConnectionClient.Signalling
         {
             var hostname = NetworkInformation.GetHostNames().FirstOrDefault(h => h.Type == HostNameType.DomainName);
             string ret =  hostname?.CanonicalName ?? "<unknown host>";
-#ifdef ORTCLIB
+#if ORTCLIB
 			ret = ret +"-dual";
 #endif
 			return ret;
@@ -873,7 +873,7 @@ namespace PeerConnectionClient.Signalling
         /// <param name="description">RTC session description.</param>
         private void SendSdp(RTCSessionDescription description)
         {
-#ifdef ORTCLIB
+#if ORTCLIB
 			var type = description.Type.ToString().ToLower();
 
             String formattedDescription = description.FormattedDescription;
@@ -1031,7 +1031,7 @@ namespace PeerConnectionClient.Signalling
                     url = "turn:";
                 }
                 url += iceServer.Host.Value + ":" + iceServer.Port.Value;
-#ifdef ORTCLIB 
+#if ORTCLIB 
 				RTCIceServer server = new RTCIceServer()
                 {
                     Urls = new List<string>(),

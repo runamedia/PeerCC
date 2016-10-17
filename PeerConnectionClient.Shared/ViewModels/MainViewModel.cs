@@ -277,8 +277,8 @@ namespace PeerConnectionClient.ViewModels
                         if (peerToRemove != null)
                             Peers.Remove(peerToRemove);
                     }
-                });
-            };
+                })
+        };
 
             // The user is Signed in to the server event handler
             Conductor.Instance.Signaller.OnSignedIn += () =>
