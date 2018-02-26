@@ -50,7 +50,8 @@ namespace PeerConnectionClient.Signalling
         public Signaller()
         {
             _state = State.NOT_CONNECTED;
-            _myId = -1;
+            _sessionId = -1;
+            _pluginHandleId = -1;
 
             // Annoying but register empty handlers
             // so we don't have to check for null everywhere
@@ -69,7 +70,8 @@ namespace PeerConnectionClient.Signalling
         {
             NOT_CONNECTED,
             RESOLVING, // Note: State not used
-            SIGNING_IN,
+            SIGNING_IN_SESSION,
+            SIGNING_IN_PLUGIN_HANDLE,
             CONNECTED,
             SIGNING_OUT_WAITING, // Note: State not used
             SIGNING_OUT,
@@ -79,7 +81,8 @@ namespace PeerConnectionClient.Signalling
         private HostName _server;
         private string _port;
         private string _clientName;
-        private int _myId;
+        private long _sessionId;
+        private long _pluginHandleId;
         private Dictionary<int, string> _peers = new Dictionary<int, string>();
 
         /// <summary>
@@ -88,7 +91,7 @@ namespace PeerConnectionClient.Signalling
         /// <returns>True if connected to the server.</returns>
         public bool IsConnected()
         {
-            return _myId != -1;
+            return _sessionId != -1 && _pluginHandleId != -1;
         }
 
         /// <summary>
@@ -111,17 +114,45 @@ namespace PeerConnectionClient.Signalling
                 _port = port;
                 _clientName = client_name;
 
-                _state = State.SIGNING_IN;
-                await ControlSocketRequestAsync(string.Format("GET /sign_in?{0} HTTP/1.0\r\n\r\n", client_name));
-                if (_state == State.CONNECTED)
+                string httpRequest = "POST /janus HTTP/1.0\r\n" +
+                    "Host: janus.runamedia.com:8088\r\n" +
+                    "Content-Type: application/json\r\n" +
+                    "Cache-Control: no-cache\r\n" +
+                    "content-length: 47\r\n\r\n" +
+                    "{\"janus\":\"create\",\"transaction\":\"LaABFrcSXWFc\"}";
+
+                _state = State.SIGNING_IN_SESSION;
+                await ControlSocketRequestAsync(httpRequest);
+                if (_state == State.SIGNING_IN_PLUGIN_HANDLE)
                 {
                     // Start the long polling loop without await
-                    var task = HangingGetReadLoopAsync();
+                    //var task = HangingGetReadLoopAsync();
                 }
                 else
                 {
                     _state = State.NOT_CONNECTED;
                     OnServerConnectionFailure();
+                    return;
+                }
+
+                string test = "POST /janus/{0} HTTP/1.0\r\n" +
+                    "Host: janus.runamedia.com:8088\r\n" +
+                    "Content-Type: application/json\r\n" +
+                    "Cache-Control: no-cache\r\n" +
+                    "content-length: 122\r\n\r\n" +
+                    "{\"janus\":\"attach\",\"plugin\":\"janus.plugin.videoroom\",\"opaque_id\":\"videoroomtest-repdXJS8NLoI\",\"transaction\":\"Hw4kBkQNGfC3\"}";
+                httpRequest = String.Format("POST /janus/{0} HTTP/1.0\r\n" +
+                    "Host: janus.runamedia.com:8088\r\n" +
+                    "Content-Type: application/json\r\n" +
+                    "Cache-Control: no-cache\r\n" +
+                    "content-length: 122\r\n\r\n" +
+                    "{{\"janus\":\"attach\",\"plugin\":\"janus.plugin.videoroom\",\"opaque_id\":\"videoroomtest-repdXJS8NLoI\",\"transaction\":\"Hw4kBkQNGfC3\"}}", _sessionId);
+                await ControlSocketRequestAsync(httpRequest);
+                if (_state != State.CONNECTED)
+                {
+                    _state = State.NOT_CONNECTED;
+                    OnServerConnectionFailure();
+                    return;
                 }
             }
             catch (Exception ex)
@@ -229,7 +260,8 @@ namespace PeerConnectionClient.Signalling
                     }
                     Close();
                     OnDisconnected();
-                    _myId = -1;
+                    _sessionId = -1;
+                    _pluginHandleId = -1;
                     return false;
                 }
 
@@ -288,7 +320,7 @@ namespace PeerConnectionClient.Signalling
             {
                 var reader = new DataReader(socket.InputStream);
                 // Set the DataReader to only wait for available data
-                reader.InputStreamOptions = InputStreamOptions.Partial;
+                //reader.InputStreamOptions = InputStreamOptions.Partial;
 
                 loadTask = reader.LoadAsync(0xffff);
                 bool succeeded = loadTask.AsTask().Wait(20000);
@@ -333,7 +365,7 @@ namespace PeerConnectionClient.Signalling
             int i = data.IndexOf("\r\n\r\n");
             if (i != -1)
             {
-                Debug.WriteLine("Signaling: Headers received [i=" + i + " data(" + data.Length + ")"/*=" + data*/ + "]");
+                Debug.WriteLine("Signaling: Headers received [i=" + i + " data(" + data.Length + ")]");
                 if (GetHeaderValue(data, false, "\r\nContent-Length: ", out content_length))
                 {
                     int total_response_size = (i + 4) + content_length;
@@ -344,7 +376,7 @@ namespace PeerConnectionClient.Signalling
                     else
                     {
                         // We haven't received everything.  Just continue to accept data.
-                        Debug.WriteLine("[Error] Singaling: Incomplete response; expected to receive " + total_response_size + ", received" + data.Length);
+                        Debug.WriteLine("[Error] Singaling: Incomplete response; expected to receive " + total_response_size + ", received " + data.Length);
                     }
                 }
                 else
@@ -395,9 +427,10 @@ namespace PeerConnectionClient.Signalling
                     return false;
                 }
 
-                if (_myId == -1)
+                if (_state == State.SIGNING_IN_SESSION)
                 {
-                    Debug.Assert(_state == State.SIGNING_IN);
+                    Debug.Assert(_state == State.SIGNING_IN_SESSION);
+#if false
                     _myId = peer_id;
                     Debug.Assert(_myId != -1);
 
@@ -424,6 +457,25 @@ namespace PeerConnectionClient.Signalling
                         }
                         OnSignedIn();
                     }
+#endif
+                    int pos = eoh + 4;
+                    string message = buffer.Substring(pos, buffer.Length - pos);
+                    JsonObject messageObject = JsonObject.Parse(message);
+                    JsonObject dataObject = messageObject.GetNamedObject("data");
+                    double idDouble = dataObject.GetNamedNumber("id");
+                    _sessionId = (long)idDouble;
+                    Debug.WriteLine("Session ID: " + _sessionId);
+                }
+                else if (_state == State.SIGNING_IN_PLUGIN_HANDLE)
+                {
+                    int pos = eoh + 4;
+                    string message = buffer.Substring(pos, buffer.Length - pos);
+                    JsonObject messageObject = JsonObject.Parse(message);
+                    JsonObject dataObject = messageObject.GetNamedObject("data");
+                    double idDouble = dataObject.GetNamedNumber("id");
+                    _pluginHandleId = (long)idDouble;
+                    Debug.WriteLine("Plugin Handle ID: " + _pluginHandleId);
+                    OnSignedIn();
                 }
                 else if (_state == State.SIGNING_OUT)
                 {
@@ -435,7 +487,11 @@ namespace PeerConnectionClient.Signalling
                     await SignOut();
                 }
 
-                if (_state == State.SIGNING_IN)
+                if (_state == State.SIGNING_IN_SESSION)
+                {
+                    _state = State.SIGNING_IN_PLUGIN_HANDLE;
+                }
+                else if (_state == State.SIGNING_IN_PLUGIN_HANDLE)
                 {
                     _state = State.CONNECTED;
                 }
@@ -462,7 +518,7 @@ namespace PeerConnectionClient.Signalling
                             return;
                         }
                         // Send the request
-                        _hangingGetSocket.WriteStringAsync(String.Format("GET /wait?peer_id={0} HTTP/1.0\r\n\r\n", _myId));
+                        _hangingGetSocket.WriteStringAsync(String.Format("GET /wait?peer_id={0} HTTP/1.0\r\n\r\n", _sessionId));
 
                         // Read the response.
                         var readResult = await ReadIntoBufferAsync(_hangingGetSocket);
@@ -482,7 +538,7 @@ namespace PeerConnectionClient.Signalling
                         // Store the position where the body begins
                         int pos = eoh + 4;
 
-                        if (_myId == peer_id)
+                        if (_sessionId == peer_id)
                         {
                             // A notification about a new member or a member that just
                             // disconnected
@@ -541,9 +597,9 @@ namespace PeerConnectionClient.Signalling
 
             _state = State.SIGNING_OUT;
 
-            if (_myId != -1)
+            if (_sessionId != -1 && _pluginHandleId != -1)
             {
-                await ControlSocketRequestAsync(String.Format("GET /sign_out?peer_id={0} HTTP/1.0\r\n\r\n", _myId));
+                await ControlSocketRequestAsync(String.Format("GET /sign_out?peer_id={0} HTTP/1.0\r\n\r\n", _sessionId));
             }
             else
             {
@@ -551,7 +607,8 @@ namespace PeerConnectionClient.Signalling
                 return true;
             }
 
-            _myId = -1;
+            _sessionId = -1;
+            _pluginHandleId = -1;
             _state = State.NOT_CONNECTED;
             return true;
         }
@@ -597,7 +654,7 @@ namespace PeerConnectionClient.Signalling
                 "Content-Type: text/plain\r\n" +
                 "\r\n" +
                 "{3}",
-                _myId, peerId, message.Length, message);
+                _sessionId, peerId, message.Length, message);
             return await ControlSocketRequestAsync(buffer);
         }
 
