@@ -126,7 +126,7 @@ namespace PeerConnectionClient.Signalling
                 if (_state == State.SIGNING_IN_PLUGIN_HANDLE)
                 {
                     // Start the long polling loop without await
-                    //var task = HangingGetReadLoopAsync();
+                    var task = HangingGetReadLoopAsync();
                 }
                 else
                 {
@@ -135,12 +135,6 @@ namespace PeerConnectionClient.Signalling
                     return;
                 }
 
-                string test = "POST /janus/{0} HTTP/1.0\r\n" +
-                    "Host: janus.runamedia.com:8088\r\n" +
-                    "Content-Type: application/json\r\n" +
-                    "Cache-Control: no-cache\r\n" +
-                    "content-length: 122\r\n\r\n" +
-                    "{\"janus\":\"attach\",\"plugin\":\"janus.plugin.videoroom\",\"opaque_id\":\"videoroomtest-repdXJS8NLoI\",\"transaction\":\"Hw4kBkQNGfC3\"}";
                 httpRequest = String.Format("POST /janus/{0} HTTP/1.0\r\n" +
                     "Host: janus.runamedia.com:8088\r\n" +
                     "Content-Type: application/json\r\n" +
@@ -323,7 +317,7 @@ namespace PeerConnectionClient.Signalling
                 //reader.InputStreamOptions = InputStreamOptions.Partial;
 
                 loadTask = reader.LoadAsync(0xffff);
-                bool succeeded = loadTask.AsTask().Wait(20000);
+                bool succeeded = loadTask.AsTask().Wait(60000);
                 if (!succeeded)
                 {
                     throw new TimeoutException("Timed out long polling, re-trying.");
@@ -519,7 +513,9 @@ namespace PeerConnectionClient.Signalling
                         }
 
                         // Send the request
-                        _hangingGetSocket.WriteStringAsync(String.Format("GET /wait?peer_id={0} HTTP/1.0\r\n\r\n", _sessionId));
+                        string httpRequest = String.Format("GET /janus/{0}?rid={1}&maxev=1 HTTP/1.0\r\n\r\n",
+                            _sessionId, DateTimeOffset.Now.ToUnixTimeMilliseconds());
+                        _hangingGetSocket.WriteStringAsync(httpRequest);
 
                         // Read the response.
                         var readResult = await ReadIntoBufferAsync(_hangingGetSocket);
