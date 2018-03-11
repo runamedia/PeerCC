@@ -536,8 +536,9 @@ namespace PeerConnectionClient.Signalling
                         // Store the position where the body begins
                         int pos = eoh + 4;
 
-                        if (_sessionId == peer_id)
+                        if (true)
                         {
+#if false
                             // A notification about a new member or a member that just
                             // disconnected
                             int id = 0;
@@ -556,6 +557,11 @@ namespace PeerConnectionClient.Signalling
                                     OnPeerDisconnected(id);
                                 }
                             }
+#endif
+                            string message = buffer.Substring(pos, buffer.Length - pos);
+                            JsonObject messageObject = JsonObject.Parse(message);
+                            string janusString = messageObject.GetNamedString("janus");
+                            Debug.WriteLine(janusString);
                         }
                         else
                         {
