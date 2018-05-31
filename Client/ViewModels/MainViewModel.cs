@@ -1885,7 +1885,7 @@ namespace PeerConnectionClient.ViewModels
         /// <returns>True if the application is ready to connect to a peer.</returns>
         private bool ConnectToPeerCommandCanExecute(object obj)
         {
-            return SelectedPeer != null && Peers.Contains(SelectedPeer) && !IsConnectedToPeer && IsReadyToConnect;
+            return true;// SelectedPeer != null && Peers.Contains(SelectedPeer) && !IsConnectedToPeer && IsReadyToConnect;
         }
 
         /// <summary>
@@ -1896,8 +1896,8 @@ namespace PeerConnectionClient.ViewModels
         {
             new Task(() => {
                 Conductor.Peer peer = new Conductor.Peer();
-                peer.Id = SelectedPeer.Id;
-                peer.Name = SelectedPeer.Name;
+                //peer.Id = SelectedPeer.Id;
+                //peer.Name = SelectedPeer.Name;
                 Conductor.Instance.ConnectToPeer(peer);
             }).Start();
         }

@@ -1228,6 +1228,8 @@ namespace PeerConnectionClient.Signalling
             Debug.Assert(peer != null);
             Debug.Assert(_peerId == -1);
 
+            _signaller.JoinRoom("1234");
+            return;
             if (_peerConnection != null)
             {
                 Debug.WriteLine("[Error] Conductor: We only support connecting to one peer at a time");

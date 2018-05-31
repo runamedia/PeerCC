@@ -73,6 +73,10 @@ namespace PeerConnectionClient.Signalling
             SIGNING_IN_SESSION,
             SIGNING_IN_PLUGIN_HANDLE,
             CONNECTED,
+            JOINING_ROOM,
+            ROOM_JOINED,
+            MAKING_CALL,
+            IN_CALL,
             SIGNING_OUT_WAITING, // Note: State not used
             SIGNING_OUT,
         };
@@ -148,6 +152,43 @@ namespace PeerConnectionClient.Signalling
                     OnServerConnectionFailure();
                     return;
                 }
+              
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("[Error] Signaling: Failed to connect to server: " + ex.Message);
+            }
+            
+           
+        }
+
+        public async void JoinRoom(string roomName)
+        {
+            try
+            {
+                if (_state != State.CONNECTED)
+                {
+                    return;
+                }
+                
+                string httpRequest = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
+                "Host: janus.runamedia.com:8088\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Cache-Control: no-cache\r\n" +
+                "content-length: 123\r\n\r\n" +
+                "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"publisher\",\"display\":\"test\"}},\"transaction\":\"1hjTLwgqfREf\"}}", _sessionId, _pluginHandleId);
+               
+                _state = State.JOINING_ROOM;
+                await ControlSocketRequestAsync(httpRequest);
+                if (_state == State.JOINING_ROOM)
+                {
+                    Debug.WriteLine("Joining room...");
+                }
+                else
+                {
+                    Debug.WriteLine("Not joining...");
+                }
+
             }
             catch (Exception ex)
             {
@@ -489,6 +530,21 @@ namespace PeerConnectionClient.Signalling
                 {
                     _state = State.CONNECTED;
                 }
+                else if (_state == State.JOINING_ROOM)
+                {
+                    int pos = eoh + 4;
+                    string message = buffer.Substring(pos, buffer.Length - pos);
+                    JsonObject messageObject = JsonObject.Parse(message);                  
+                    string ackString = messageObject.GetNamedString("janus");
+                    Debug.WriteLine(ackString);
+                    double idDouble = messageObject.GetNamedNumber("session_id");
+                    _sessionId = (long)idDouble;
+                    Debug.WriteLine("Session ID: " + _sessionId);                    
+                    string transactionString = messageObject.GetNamedString("transaction");
+                    Debug.WriteLine("Transaction:" + transactionString);
+                    
+                }
+               
             }
 
             return true;
@@ -573,6 +629,32 @@ namespace PeerConnectionClient.Signalling
                                 OnMessageFromPeer(peer_id, message);
                             }
                         }
+
+                        if (_state == State.JOINING_ROOM)
+                        {
+                          
+                             pos = eoh + 4;
+                            string message = buffer.Substring(pos, buffer.Length - pos);
+                            JsonObject messageObject = JsonObject.Parse(message);
+                            JsonObject plugindataObject = messageObject.GetNamedObject("plugindata");
+                            string pluginString = plugindataObject.GetNamedString("plugin");
+                            Debug.WriteLine(pluginString);
+                            JsonObject dataObject = plugindataObject.GetNamedObject("data");
+                            double roomDouble = dataObject.GetNamedNumber("room");
+                          
+                          
+                            Debug.WriteLine("Room:"+ roomDouble);
+                            
+                           
+                            
+                            _state = State.ROOM_JOINED;
+                            Debug.WriteLine("Joined room!!!");
+                        }
+                        else
+                        {
+                            Debug.WriteLine("");
+                        }
+
                     }
                     catch (Exception e)
                     {
