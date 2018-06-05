@@ -812,6 +812,7 @@ namespace PeerConnectionClient.Signalling
         /// <param name="evt">Details about RTC Peer Connection Ice event.</param>
         private void PeerConnection_OnIceCandidate(RTCPeerConnectionIceEvent evt)
         {
+            return;
             if (evt.Candidate == null) // relevant: GlobalObserver::OnIceComplete in Org.WebRtc
             {
                 return;
@@ -950,6 +951,7 @@ namespace PeerConnectionClient.Signalling
             Signaller.OnPeerConnected += Signaller_OnPeerConnected;
             Signaller.OnPeerHangup += Signaller_OnPeerHangup;
             Signaller.OnPeerDisconnected += Signaller_OnPeerDisconnected;
+            Signaller.OnRoomJoined += Signaller_OnRoomJoined;
             Signaller.OnServerConnectionFailure += Signaller_OnServerConnectionFailure;
             Signaller.OnSignedIn += Signaller_OnSignedIn;
 
@@ -997,6 +999,42 @@ namespace PeerConnectionClient.Signalling
         }
 
         /// <summary>
+        /// Handler for Signaller's OnRoomJoined event.
+        /// </summary>
+        private async void Signaller_OnRoomJoined()
+        {
+#if ORTCLIB
+            _signalingMode = Helper.SignalingModeForClientName(peer.Name);
+#endif
+            _connectToPeerCancelationTokenSource = new System.Threading.CancellationTokenSource();
+            _connectToPeerTask = CreatePeerConnection(_connectToPeerCancelationTokenSource.Token);
+            bool connectResult = await _connectToPeerTask;
+            _connectToPeerTask = null;
+            _connectToPeerCancelationTokenSource.Dispose();
+            if (connectResult)
+            {
+                //_peerId = peer.Id;
+                var offer = await _peerConnection.CreateOffer();
+#if !ORTCLIB
+                // Alter sdp to force usage of selected codecs
+                string newSdp = offer.Sdp;
+                SdpUtils.SelectCodecs(ref newSdp,
+                    new Org.WebRtc.CodecInfo(AudioCodec.ClockRate, AudioCodec.Name),
+                    new Org.WebRtc.CodecInfo(VideoCodec.ClockRate, VideoCodec.Name));
+                offer.Sdp = newSdp;
+#endif
+                await _peerConnection.SetLocalDescription(offer);
+                Debug.WriteLine("Conductor: Sending offer.");
+                SendSdp(offer);
+                
+                
+#if ORTCLIB
+                OrtcStatsManager.Instance.StartCallWatch(SessionId, true);
+#endif
+            }
+        }
+
+        /// <summary>
         /// Handler for Signaller's OnPeerConnected event.
         /// </summary>
         /// <param name="id">ID of the connected peer.</param>
@@ -1029,7 +1067,11 @@ namespace PeerConnectionClient.Signalling
                     return;
                 }
 
-                string type = jMessage.ContainsKey(kSessionDescriptionTypeName) ? jMessage.GetNamedString(kSessionDescriptionTypeName) : null;
+                JsonObject jJsep = jMessage.GetNamedObject("jsep");
+                if (jJsep == null)
+                    Debug.WriteLine("[Error] Conductor: No Jsep." + message);
+
+                string type = jJsep.ContainsKey(kSessionDescriptionTypeName) ? jJsep.GetNamedString(kSessionDescriptionTypeName) : null;
 #if ORTCLIB
                 bool created = false;
 #endif
@@ -1096,7 +1138,7 @@ namespace PeerConnectionClient.Signalling
                         sdp = jMessage.GetNamedString(kSessionDescriptionSdpName);
                     }
 #else
-                    sdp = jMessage.ContainsKey(kSessionDescriptionSdpName) ? jMessage.GetNamedString(kSessionDescriptionSdpName) : null;
+                    sdp = jJsep.ContainsKey(kSessionDescriptionSdpName) ? jJsep.GetNamedString(kSessionDescriptionSdpName) : null;
 #endif
                     if (IsNullOrEmpty(sdp))
                     {
@@ -1225,45 +1267,18 @@ namespace PeerConnectionClient.Signalling
         /// Calls to connect to the selected peer.
         /// </summary>
         /// <param name="peer">Peer to connect to.</param>
-        public async void ConnectToPeer(Peer peer)
+        public void ConnectToPeer(Peer peer)
         {
             Debug.Assert(peer != null);
             Debug.Assert(_peerId == -1);
 
-            _signaller.JoinRoom("1234");
-            return;
             if (_peerConnection != null)
             {
                 Debug.WriteLine("[Error] Conductor: We only support connecting to one peer at a time");
                 return;
             }
-#if ORTCLIB
-            _signalingMode = Helper.SignalingModeForClientName(peer.Name);
-#endif
-            _connectToPeerCancelationTokenSource = new System.Threading.CancellationTokenSource();
-            _connectToPeerTask = CreatePeerConnection(_connectToPeerCancelationTokenSource.Token);
-            bool connectResult = await _connectToPeerTask;
-            _connectToPeerTask = null;
-            _connectToPeerCancelationTokenSource.Dispose();
-            if (connectResult)
-            {
-                _peerId = peer.Id;
-                var offer = await _peerConnection.CreateOffer();
-#if !ORTCLIB
-                // Alter sdp to force usage of selected codecs
-                string newSdp = offer.Sdp;
-                SdpUtils.SelectCodecs(ref newSdp,
-                    new Org.WebRtc.CodecInfo(AudioCodec.ClockRate, AudioCodec.Name),
-                    new Org.WebRtc.CodecInfo(VideoCodec.ClockRate, VideoCodec.Name));
-                offer.Sdp = newSdp;
-#endif
-                await _peerConnection.SetLocalDescription(offer);
-                Debug.WriteLine("Conductor: Sending offer.");
-                SendSdp(offer);
-#if ORTCLIB
-                OrtcStatsManager.Instance.StartCallWatch(SessionId, true);
-#endif
-            }
+
+            _signaller.JoinRoom("1234");
         }
 
         /// <summary>
