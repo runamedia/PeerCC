@@ -812,7 +812,7 @@ namespace PeerConnectionClient.Signalling
         /// <param name="evt">Details about RTC Peer Connection Ice event.</param>
         private void PeerConnection_OnIceCandidate(RTCPeerConnectionIceEvent evt)
         {
-            return;
+
             if (evt.Candidate == null) // relevant: GlobalObserver::OnIceComplete in Org.WebRtc
             {
                 return;
@@ -1066,67 +1066,72 @@ namespace PeerConnectionClient.Signalling
                     Debug.WriteLine("[Error] Conductor: Received unknown message." + message);
                     return;
                 }
+                JsonObject jsonObj = JsonObject.Parse(message);
 
-                JsonObject jJsep = jMessage.GetNamedObject("jsep");
-                if (jJsep == null)
-                    Debug.WriteLine("[Error] Conductor: No Jsep." + message);
+                string buffer = "";
 
-                string type = jJsep.ContainsKey(kSessionDescriptionTypeName) ? jJsep.GetNamedString(kSessionDescriptionTypeName) : null;
+                if (jsonObj.GetNamedString("janus", buffer) == "event")
+                {
+                    JsonObject jJsep = jMessage.GetNamedObject("jsep");
+                    if (jJsep == null)
+                        Debug.WriteLine("[Error] Conductor: No Jsep." + message);
+
+                    string type = jJsep.ContainsKey(kSessionDescriptionTypeName) ? jJsep.GetNamedString(kSessionDescriptionTypeName) : null;
 #if ORTCLIB
                 bool created = false;
 #endif
-                if (_peerConnection == null)
-                {
-                    if (!IsNullOrEmpty(type))
+                    if (_peerConnection == null)
                     {
-                        // Create the peer connection only when call is
-                        // about to get initiated. Otherwise ignore the
-                        // messages from peers which could be a result
-                        // of old (but not yet fully closed) connections.
-                        if (type == "offer" || type == "answer" || type == "json")
+                        if (!IsNullOrEmpty(type))
                         {
-                            Debug.Assert(_peerId == -1);
-                            _peerId = peerId;              
+                            // Create the peer connection only when call is
+                            // about to get initiated. Otherwise ignore the
+                            // messages from peers which could be a result
+                            // of old (but not yet fully closed) connections.
+                            if (type == "offer" || type == "answer" || type == "json")
+                            {
+                                Debug.Assert(_peerId == -1);
+                                _peerId = peerId;
 
-                            IEnumerable<Peer> enumerablePeer = _peers.Where(x => x.Id == peerId);
-                            _peer = enumerablePeer.First();
+                                IEnumerable<Peer> enumerablePeer = _peers.Where(x => x.Id == peerId);
+                                _peer = enumerablePeer.First();
 #if ORTCLIB
                             created = true;
                             _signalingMode = Helper.SignalingModeForClientName(Peer.Name);
 #endif
-                            _connectToPeerCancelationTokenSource = new CancellationTokenSource();
-                            _connectToPeerTask = CreatePeerConnection(_connectToPeerCancelationTokenSource.Token);
-                            bool connectResult = await _connectToPeerTask;
-                            _connectToPeerTask = null;
-                            _connectToPeerCancelationTokenSource.Dispose();
-                            if (!connectResult)
-                            {
-                                Debug.WriteLine("[Error] Conductor: Failed to initialize our PeerConnection instance");
-                                await Signaller.SignOut();
-                                return;
-                            }
-                            else if (_peerId != peerId)
-                            {
-                                Debug.WriteLine("[Error] Conductor: Received a message from unknown peer while already in a conversation with a different peer.");
-                                return;
+                                _connectToPeerCancelationTokenSource = new CancellationTokenSource();
+                                _connectToPeerTask = CreatePeerConnection(_connectToPeerCancelationTokenSource.Token);
+                                bool connectResult = await _connectToPeerTask;
+                                _connectToPeerTask = null;
+                                _connectToPeerCancelationTokenSource.Dispose();
+                                if (!connectResult)
+                                {
+                                    Debug.WriteLine("[Error] Conductor: Failed to initialize our PeerConnection instance");
+                                    await Signaller.SignOut();
+                                    return;
+                                }
+                                else if (_peerId != peerId)
+                                {
+                                    Debug.WriteLine("[Error] Conductor: Received a message from unknown peer while already in a conversation with a different peer.");
+                                    return;
+                                }
                             }
                         }
+                        else
+                        {
+                            Debug.WriteLine("[Warn] Conductor: Received an untyped message after closing peer connection.");
+                            return;
+                        }
                     }
-                    else
-                    {
-                        Debug.WriteLine("[Warn] Conductor: Received an untyped message after closing peer connection.");
-                        return;
-                    }
-                }
 
-                if (_peerConnection != null && !IsNullOrEmpty(type))
-                {
-                    if (type == "offer-loopback")
+                    if (_peerConnection != null && !IsNullOrEmpty(type))
                     {
-                        // Loopback not supported
-                        Debug.Assert(false);
-                    }
-                    string sdp = null;
+                        if (type == "offer-loopback")
+                        {
+                            // Loopback not supported
+                            Debug.Assert(false);
+                        }
+                        string sdp = null;
 #if ORTCLIB
                     if (jMessage.ContainsKey(kSessionDescriptionJsonName))
                     {
@@ -1138,13 +1143,13 @@ namespace PeerConnectionClient.Signalling
                         sdp = jMessage.GetNamedString(kSessionDescriptionSdpName);
                     }
 #else
-                    sdp = jJsep.ContainsKey(kSessionDescriptionSdpName) ? jJsep.GetNamedString(kSessionDescriptionSdpName) : null;
+                        sdp = jJsep.ContainsKey(kSessionDescriptionSdpName) ? jJsep.GetNamedString(kSessionDescriptionSdpName) : null;
 #endif
-                    if (IsNullOrEmpty(sdp))
-                    {
-                        Debug.WriteLine("[Error] Conductor: Can't parse received session description message.");
-                        return;
-                    }
+                        if (IsNullOrEmpty(sdp))
+                        {
+                            Debug.WriteLine("[Error] Conductor: Can't parse received session description message.");
+                            return;
+                        }
 
 #if ORTCLIB
                     RTCSessionDescriptionSignalingType messageType = RTCSessionDescriptionSignalingType.SdpOffer;
@@ -1157,74 +1162,75 @@ namespace PeerConnectionClient.Signalling
                         default: Debug.Assert(false, type); break;
                     }
 #else
-                    RTCSdpType messageType = RTCSdpType.Offer;
-                    switch (type)
-                    {
-                        case "offer": messageType = RTCSdpType.Offer; break;
-                        case "answer": messageType = RTCSdpType.Answer; break;
-                        case "pranswer": messageType = RTCSdpType.Pranswer; break;
-                        default: Debug.Assert(false, type); break;
-                    }
+                        RTCSdpType messageType = RTCSdpType.Offer;
+                        switch (type)
+                        {
+                            case "offer": messageType = RTCSdpType.Offer; break;
+                            case "answer": messageType = RTCSdpType.Answer; break;
+                            case "pranswer": messageType = RTCSdpType.Pranswer; break;
+                            default: Debug.Assert(false, type); break;
+                        }
 #endif
-                    Debug.WriteLine("Conductor: Received session description: " + message);
-                    await _peerConnection.SetRemoteDescription(new RTCSessionDescription(messageType, sdp));
+                        Debug.WriteLine("Conductor: Received session description: " + message);
+                        await _peerConnection.SetRemoteDescription(new RTCSessionDescription(messageType, sdp));
 
 #if ORTCLIB
                     if ((messageType == RTCSessionDescriptionSignalingType.SdpOffer) ||
                         ((created) && (messageType == RTCSessionDescriptionSignalingType.Json)))
 #else
-                    if (messageType == RTCSdpType.Offer)
+                        if (messageType == RTCSdpType.Offer)
 #endif
-                    {
-                        var answer = await _peerConnection.CreateAnswer();
-                        await _peerConnection.SetLocalDescription(answer);
-                        // Send answer
-                        SendSdp(answer);
+                        {
+                            var answer = await _peerConnection.CreateAnswer();
+                            await _peerConnection.SetLocalDescription(answer);
+                            // Send answer
+                            SendSdp(answer);
 #if ORTCLIB
                         OrtcStatsManager.Instance.StartCallWatch(SessionId, false);
 #endif
+                        }
                     }
-                }
-                else
-                {
-                    RTCIceCandidate candidate = null;
+                    else
+                    {
+                        RTCIceCandidate candidate = null;
 #if ORTCLIB
                     if (RTCPeerConnectionSignalingMode.Json != _signalingMode)
 #endif
-                    {
-                        var sdpMid = jMessage.ContainsKey(kCandidateSdpMidName)
-                            ? jMessage.GetNamedString(kCandidateSdpMidName)
-                            : null;
-                        var sdpMlineIndex = jMessage.ContainsKey(kCandidateSdpMlineIndexName)
-                            ? jMessage.GetNamedNumber(kCandidateSdpMlineIndexName)
-                            : -1;
-                        var sdp = jMessage.ContainsKey(kCandidateSdpName)
-                            ? jMessage.GetNamedString(kCandidateSdpName)
-                            : null;
-                        //TODO: Check is this proper condition ((String.IsNullOrEmpty(sdpMid) && (sdpMlineIndex == -1)) || String.IsNullOrEmpty(sdp))
-                        if (IsNullOrEmpty(sdpMid) || sdpMlineIndex == -1 || IsNullOrEmpty(sdp))
                         {
-                            Debug.WriteLine("[Error] Conductor: Can't parse received message.\n" + message);
-                            return;
-                        }
+                            var sdpMid = jMessage.ContainsKey(kCandidateSdpMidName)
+                                ? jMessage.GetNamedString(kCandidateSdpMidName)
+                                : null;
+                            var sdpMlineIndex = jMessage.ContainsKey(kCandidateSdpMlineIndexName)
+                                ? jMessage.GetNamedNumber(kCandidateSdpMlineIndexName)
+                                : -1;
+                            var sdp = jMessage.ContainsKey(kCandidateSdpName)
+                                ? jMessage.GetNamedString(kCandidateSdpName)
+                                : null;
+                            //TODO: Check is this proper condition ((String.IsNullOrEmpty(sdpMid) && (sdpMlineIndex == -1)) || String.IsNullOrEmpty(sdp))
+                            if (IsNullOrEmpty(sdpMid) || sdpMlineIndex == -1 || IsNullOrEmpty(sdp))
+                            {
+                                Debug.WriteLine("[Error] Conductor: Can't parse received message.\n" + message);
+                                return;
+                            }
 #if ORTCLIB
                         candidate = IsNullOrEmpty(sdpMid) ? RTCIceCandidate.FromSdpStringWithMLineIndex(sdp, (ushort)sdpMlineIndex) : RTCIceCandidate.FromSdpStringWithMid(sdp, sdpMid);
 #else
-                        candidate = new RTCIceCandidate(sdp, sdpMid, (ushort)sdpMlineIndex);
+                            candidate = new RTCIceCandidate(sdp, sdpMid, (ushort)sdpMlineIndex);
 #endif
-                    }
+                        }
 #if ORTCLIB
-                    else
+                   else
                     {
-                        candidate = RTCIceCandidate.FromJsonString(message);
+                       candidate = RTCIceCandidate.FromJsonString(message);
                     }
-                    _peerConnection?.AddIceCandidate(candidate);
+                           _peerConnection?.AddIceCandidate(candidate);
 #else
-                    await _peerConnection.AddIceCandidate(candidate);
+                           await _peerConnection.AddIceCandidate(candidate);
 #endif
 
 
-                    Debug.WriteLine("Conductor: Received candidate : " + message);
+                           Debug.WriteLine("Conductor: Received candidate : " + message);
+                    }
                 }
             }).Wait();
         }

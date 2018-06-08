@@ -742,6 +742,7 @@ namespace PeerConnectionClient.Signalling
         /// <param name="peerId">ID of the peer to send a message to.</param>
         /// <param name="message">Message to send.</param>
         /// <returns>True if the message was sent.</returns>
+         JsonObject js;
         public async Task<bool> SendToPeer(int peerId, string message)
         {
             if (_state != State.ROOM_JOINED)
@@ -755,27 +756,43 @@ namespace PeerConnectionClient.Signalling
             //{
             //    return false;
             //}
+            string buffer="";
 
-            string bodyMessage = "{\"janus\":\"message\",\"body\":{\"request\":\"configure\",\"audio\":true,\"video\":true},\"transaction\":\"Ts5cRiKPVcP5\",\"jsep\":"+message+"}";
+            JsonObject jsonObject = JsonObject.Parse(message);
+         
+      
+            if (jsonObject.GetNamedString("type",buffer)=="offer")
+            {
+                string bodyMessage = "{\"janus\":\"message\",\"body\":{\"request\":\"configure\",\"audio\":true,\"video\":true},\"transaction\":\"Ts5cRiKPVcP5\",\"jsep\":" + message + "}";
 
-            string buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
-                "Host: janus.runamedia.com:8088\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Cache-Control: no-cache\r\n" +
-                "Content-Length: {2}\r\n" +
-                "\r\n" +
-                "{3}",
-                _sessionId, _pluginHandleId,bodyMessage.Length, bodyMessage);
-            string httpRequest = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
-               "Host: janus.runamedia.com:8088\r\n" +
-               "Content-Type: application/json\r\n" +
-               "Cache-Control: no-cache\r\n" +
-               "content-length: 123\r\n\r\n" +
-               "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"publisher\",\"display\":\"test\"}},\"transaction\":\"1hjTLwgqfREf\"}}", _sessionId, _pluginHandleId);
+                buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
+                   "Host: janus.runamedia.com:8088\r\n" +
+                   "Content-Type: application/json\r\n" +
+                   "Cache-Control: no-cache\r\n" +
+                   "Content-Length: {2}\r\n" +
+                   "\r\n" +
+                   "{3}",
+                   _sessionId, _pluginHandleId, bodyMessage.Length, bodyMessage);
+            }
 
+            if (buffer=="")
+            {
+                if (jsonObject.GetNamedString("sdpMid", buffer) =="audio"||jsonObject.GetNamedString("sdpMid", buffer) =="video")
+                {
+                    string bodyMessage = "{\"janus\":\"trickle\",\"candidate\":" + message + "," + "\"transaction\":\"pF9TenPRqgnI\"" + "}";
 
-            return await ControlSocketRequestAsync(buffer);
+                    buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
+                        "Host: janus.runamedia.com:8088\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Cache-Control: no-cache\r\n" +
+                        "Content-Length: {2}\r\n" +
+                        "\r\n" +
+                        "{3}",
+                        _sessionId, _pluginHandleId, bodyMessage.Length, bodyMessage);
+                }
+            }
 
+            return await ControlSocketRequestAsync(buffer);  
         }
 
         /// <summary>
