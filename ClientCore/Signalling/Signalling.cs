@@ -25,7 +25,7 @@ namespace PeerConnectionClient.Signalling
     public delegate void DisconnectedDelegate();
     public delegate void PeerConnectedDelegate(int id, string name);
     public delegate void PeerDisonnectedDelegate(int peer_id);
-    public delegate void RoomJoinedDelegate();
+    public delegate void PublisherRoomJoinedDelegate();
     public delegate void PeerHangupDelegate(int peer_id);
     public delegate void MessageFromPeerDelegate(int peer_id, string message);
     public delegate void MessageSentDelegate(int err);
@@ -41,7 +41,7 @@ namespace PeerConnectionClient.Signalling
         public event DisconnectedDelegate OnDisconnected;
         public event PeerConnectedDelegate OnPeerConnected;
         public event PeerDisonnectedDelegate OnPeerDisconnected;
-        public event RoomJoinedDelegate OnRoomJoined;
+        public event PublisherRoomJoinedDelegate PublisherOnRoomJoined;
         public event PeerHangupDelegate OnPeerHangup;
         public event MessageFromPeerDelegate OnMessageFromPeer;
         public event ServerConnectionFailureDelegate OnServerConnectionFailure;
@@ -53,7 +53,7 @@ namespace PeerConnectionClient.Signalling
         {
             _state = State.NOT_CONNECTED;
             _sessionId = -1;
-            _pluginHandleId = -1;
+            _publisherPluginHandleId = -1;
 
             // Annoying but register empty handlers
             // so we don't have to check for null everywhere
@@ -61,7 +61,7 @@ namespace PeerConnectionClient.Signalling
             OnDisconnected += () => { };
             OnPeerConnected += (a, b) => { };
             OnPeerDisconnected += (a) => { };
-            OnRoomJoined += () => { };
+            PublisherOnRoomJoined += () => { };
             OnMessageFromPeer += (a, b) => { };
             OnServerConnectionFailure += () => { };
         }
@@ -87,7 +87,9 @@ namespace PeerConnectionClient.Signalling
         private string _port;
         private string _clientName;
         private long _sessionId;
-        private long _pluginHandleId;
+        private long _publisherPluginHandleId;
+        private List<long> _listenerPluginHandleIdList = new List<long>();
+
         private Dictionary<int, string> _peers = new Dictionary<int, string>();
 
         /// <summary>
@@ -96,7 +98,7 @@ namespace PeerConnectionClient.Signalling
         /// <returns>True if connected to the server.</returns>
         public bool IsConnected()
         {
-            return _sessionId != -1 && _pluginHandleId != -1;
+            return _sessionId != -1 && _publisherPluginHandleId != -1;
         }
 
         /// <summary>
@@ -177,7 +179,7 @@ namespace PeerConnectionClient.Signalling
                 "Content-Type: application/json\r\n" +
                 "Cache-Control: no-cache\r\n" +
                 "content-length: 123\r\n\r\n" +
-                "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"publisher\",\"display\":\"test\"}},\"transaction\":\"1hjTLwgqfREf\"}}", _sessionId, _pluginHandleId);
+                "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"publisher\",\"display\":\"1234\"}},\"transaction\":\"1hjTLwgqfREf\"}}", _sessionId, _publisherPluginHandleId);
                
                 _state = State.JOINING_ROOM;
                 await ControlSocketRequestAsync(httpRequest);
@@ -195,6 +197,26 @@ namespace PeerConnectionClient.Signalling
             {
                 Debug.WriteLine("[Error] Signaling: Failed to connect to server: " + ex.Message);
             }
+        }
+        public async void JoinRemoteParticipant(long feed)
+        {
+           string httpRequest = String.Format("POST /janus/{0} HTTP/1.0\r\n" +
+                   "Host: janus.runamedia.com:8088\r\n" +
+                   "Content-Type: application/json\r\n" +
+                   "Cache-Control: no-cache\r\n" +
+                   "content-length: 122\r\n\r\n" +
+                   "{{\"janus\":\"attach\",\"plugin\":\"janus.plugin.videoroom\",\"opaque_id\":\"videoroomtest-lGqMjJeP1GYe\",\"transaction\":\"Hw4kBkQNGfC3\"}}", _sessionId);
+            await ControlSocketRequestAsync(httpRequest);
+
+           
+             httpRequest = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
+               "Host: janus.runamedia.com:8088\r\n" +
+               "Content-Type: application/json\r\n" +
+               "Cache-Control: no-cache\r\n" +
+               "content-length:153\r\n\r\n" +
+              "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"listener\",\"feed\":{2},\"private_id\":3551483193}},\"transaction\":\"1hjTLwgqfREf\"}}", _sessionId, _listenerPluginHandleIdList[0], feed);
+
+            await ControlSocketRequestAsync(httpRequest);
         }
 
         private StreamSocket _hangingGetSocket;
@@ -297,7 +319,7 @@ namespace PeerConnectionClient.Signalling
                     Close();
                     OnDisconnected();
                     _sessionId = -1;
-                    _pluginHandleId = -1;
+                    _publisherPluginHandleId = -1;
                     return false;
                 }
 
@@ -509,8 +531,8 @@ namespace PeerConnectionClient.Signalling
                     JsonObject messageObject = JsonObject.Parse(message);
                     JsonObject dataObject = messageObject.GetNamedObject("data");
                     double idDouble = dataObject.GetNamedNumber("id");
-                    _pluginHandleId = (long)idDouble;
-                    Debug.WriteLine("Plugin Handle ID: " + _pluginHandleId);
+                    _publisherPluginHandleId = (long)idDouble;
+                    Debug.WriteLine("Plugin Handle ID: " + _publisherPluginHandleId);
                     OnSignedIn();
                 }
                 else if (_state == State.SIGNING_OUT)
@@ -550,7 +572,13 @@ namespace PeerConnectionClient.Signalling
                 {
                     int pos = eoh + 4;
                     string message = buffer.Substring(pos, buffer.Length - pos);
-                     JsonObject messageObject = JsonObject.Parse(message);
+                    JsonObject messageObject = JsonObject.Parse(message);
+                    if (messageObject.GetNamedObject("data", null) != null)
+                    {
+                        JsonObject dataObject = messageObject.GetNamedObject("data", null);
+                        long idLong = (long)dataObject.GetNamedNumber("id");
+                        _listenerPluginHandleIdList.Add(idLong);
+                    }
                     string ackString = messageObject.GetNamedString("janus");
                     Debug.WriteLine(ackString);
                     double idDouble = messageObject.GetNamedNumber("session_id");
@@ -663,19 +691,16 @@ namespace PeerConnectionClient.Signalling
                             JsonObject dataObject = plugindataObject.GetNamedObject("data");
                             double roomDouble = dataObject.GetNamedNumber("room");
                           
-                          
                             Debug.WriteLine("Room:"+ roomDouble);
-
-
 
                             _state = State.ROOM_JOINED;
                             Debug.WriteLine("Joined room!!!");
 
-                            OnRoomJoined();
+                            PublisherOnRoomJoined();
                         }
                         else if(_state==State.ROOM_JOINED)
                         {
-                            string message = buffer.Substring(pos, buffer.Length - pos);
+                            string message = buffer.Substring(pos, buffer.Length - pos); 
                             OnMessageFromPeer(0, message);
                         }
 
@@ -705,7 +730,7 @@ namespace PeerConnectionClient.Signalling
 
             _state = State.SIGNING_OUT;
 
-            if (_sessionId != -1 && _pluginHandleId != -1)
+            if (_sessionId != -1 && _publisherPluginHandleId != -1)
             {
                 await ControlSocketRequestAsync(String.Format("GET /sign_out?peer_id={0} HTTP/1.0\r\n\r\n", _sessionId));
             }
@@ -716,7 +741,7 @@ namespace PeerConnectionClient.Signalling
             }
 
             _sessionId = -1;
-            _pluginHandleId = -1;
+            _publisherPluginHandleId = -1;
             _state = State.NOT_CONNECTED;
             return true;
         }
@@ -761,7 +786,7 @@ namespace PeerConnectionClient.Signalling
             JsonObject jsonObject = JsonObject.Parse(message);
          
       
-            if (jsonObject.GetNamedString("type",buffer)=="offer")
+            if (jsonObject.GetNamedString("type", buffer) == "offer")
             {
                 string bodyMessage = "{\"janus\":\"message\",\"body\":{\"request\":\"configure\",\"audio\":true,\"video\":true},\"transaction\":\"Ts5cRiKPVcP5\",\"jsep\":" + message + "}";
 
@@ -772,12 +797,12 @@ namespace PeerConnectionClient.Signalling
                    "Content-Length: {2}\r\n" +
                    "\r\n" +
                    "{3}",
-                   _sessionId, _pluginHandleId, bodyMessage.Length, bodyMessage);
+                   _sessionId, _publisherPluginHandleId, bodyMessage.Length, bodyMessage);
             }
 
             if (buffer=="")
             {
-                if (jsonObject.GetNamedString("sdpMid", buffer) =="audio"||jsonObject.GetNamedString("sdpMid", buffer) =="video")
+                if (jsonObject.GetNamedString("sdpMid", buffer) == "audio" || jsonObject.GetNamedString("sdpMid", buffer) == "video")
                 {
                     string bodyMessage = "{\"janus\":\"trickle\",\"candidate\":" + message + "," + "\"transaction\":\"pF9TenPRqgnI\"" + "}";
 
@@ -788,9 +813,23 @@ namespace PeerConnectionClient.Signalling
                         "Content-Length: {2}\r\n" +
                         "\r\n" +
                         "{3}",
-                        _sessionId, _pluginHandleId, bodyMessage.Length, bodyMessage);
+                        _sessionId, _publisherPluginHandleId, bodyMessage.Length, bodyMessage);
                 }
             }
+            if (jsonObject.GetNamedString("type", buffer) == "answer")
+            {
+                    string bodyMessage = "{\"janus\":\"message\",\"body\":{\"request\":\"start\",\"room\":1234},\"transaction\":\"Ts5cRiKPVcP5\",\"jsep\":" + message + "}";
+
+                    buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
+                       "Host: janus.runamedia.com:8088\r\n" +
+                       "Content-Type: application/json\r\n" +
+                       "Cache-Control: no-cache\r\n" +
+                       "Content-Length: {2}\r\n" +
+                       "\r\n" +
+                       "{3}",
+                       _sessionId, _listenerPluginHandleIdList, bodyMessage.Length, bodyMessage);
+            }
+
 
             return await ControlSocketRequestAsync(buffer);  
         }
@@ -806,6 +845,7 @@ namespace PeerConnectionClient.Signalling
             string message = json.Stringify();
             return await SendToPeer(peerId, message);
         }
+
     }
 
     /// <summary>
