@@ -46,6 +46,7 @@ namespace PeerConnectionClient.Signalling
         public event MessageFromPeerDelegate OnMessageFromPeer;
         public event ServerConnectionFailureDelegate OnServerConnectionFailure;
 
+        static int counter = 0;
         /// <summary>
         /// Creates an instance of a Signaller.
         /// </summary>
@@ -791,46 +792,46 @@ namespace PeerConnectionClient.Signalling
                 string bodyMessage = "{\"janus\":\"message\",\"body\":{\"request\":\"configure\",\"audio\":true,\"video\":true},\"transaction\":\"Ts5cRiKPVcP5\",\"jsep\":" + message + "}";
 
                 buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
-                   "Host: janus.runamedia.com:8088\r\n" +
-                   "Content-Type: application/json\r\n" +
-                   "Cache-Control: no-cache\r\n" +
-                   "Content-Length: {2}\r\n" +
-                   "\r\n" +
-                   "{3}",
-                   _sessionId, _publisherPluginHandleId, bodyMessage.Length, bodyMessage);
+                    "Host: janus.runamedia.com:8088\r\n" +
+                    "Content-Type: application/json\r\n" +
+                    "Cache-Control: no-cache\r\n" +
+                    "Content-Length: {2}\r\n" +
+                    "\r\n" +
+                    "{3}",
+                    _sessionId, _publisherPluginHandleId, bodyMessage.Length, bodyMessage);
             }
 
-            if (buffer=="")
-            {
-                if (jsonObject.GetNamedString("sdpMid", buffer) == "audio" || jsonObject.GetNamedString("sdpMid", buffer) == "video")
-                {
-                    string bodyMessage = "{\"janus\":\"trickle\",\"candidate\":" + message + "," + "\"transaction\":\"pF9TenPRqgnI\"" + "}";
+            if (jsonObject.GetNamedString("sdpMid", buffer) == "audio" || jsonObject.GetNamedString("sdpMid", buffer) == "video")
+            {   
+                string bodyMessage = "{\"janus\":\"trickle\",\"candidate\":" + message + "," + "\"transaction\":\"pF9TenPRqgnI\"" + "}";
 
-                    buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
-                        "Host: janus.runamedia.com:8088\r\n" +
-                        "Content-Type: application/json\r\n" +
-                        "Cache-Control: no-cache\r\n" +
-                        "Content-Length: {2}\r\n" +
-                        "\r\n" +
-                        "{3}",
-                        _sessionId, _publisherPluginHandleId, bodyMessage.Length, bodyMessage);
-                }
+                long _pluginHandleId = counter == 0 ? _publisherPluginHandleId : _listenerPluginHandleIdList[0]; 
+                   
+                buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
+                    "Host: janus.runamedia.com:8088\r\n" +
+                    "Content-Type: application/json\r\n" +
+                    "Cache-Control: no-cache\r\n" +
+                    "Content-Length: {2}\r\n" +
+                    "\r\n" +
+                    "{3}",
+                    _sessionId, _pluginHandleId, bodyMessage.Length, bodyMessage);      
             }
+
             if (jsonObject.GetNamedString("type", buffer) == "answer")
             {
-                    string bodyMessage = "{\"janus\":\"message\",\"body\":{\"request\":\"start\",\"room\":1234},\"transaction\":\"Ts5cRiKPVcP5\",\"jsep\":" + message + "}";
+                string bodyMessage = "{\"janus\":\"message\",\"body\":{\"request\":\"start\",\"room\":1234},\"transaction\":\"2WW3VhknPoWs\",\"jsep\":" + message + "}";
 
-                    buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
-                       "Host: janus.runamedia.com:8088\r\n" +
-                       "Content-Type: application/json\r\n" +
-                       "Cache-Control: no-cache\r\n" +
-                       "Content-Length: {2}\r\n" +
-                       "\r\n" +
-                       "{3}",
-                       _sessionId, _listenerPluginHandleIdList, bodyMessage.Length, bodyMessage);
+                buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
+                    "Host: janus.runamedia.com:8088\r\n" +
+                    "Content-Type: application/json\r\n" +
+                    "Cache-Control: no-cache\r\n" +
+                    "Content-Length: {2}\r\n" +
+                    "\r\n" +
+                    "{3}",
+                    _sessionId, _listenerPluginHandleIdList[0], bodyMessage.Length, bodyMessage);
+                counter++;
             }
-
-
+            
             return await ControlSocketRequestAsync(buffer);  
         }
 

@@ -1243,12 +1243,12 @@ namespace PeerConnectionClient.Signalling
                             }
                         }
                     }
-                }
+                } 
                 else if (jsonObj.GetNamedString("janus", buffer) == "trickle")
                 {
                     RTCIceCandidate candidate = null;
 #if ORTCLIB
-                           if (RTCPeerConnectionSignalingMode.Json != _signalingMode)
+                    if (RTCPeerConnectionSignalingMode.Json != _signalingMode)
 #endif
                     {
                         var sdpMid = jMessage.ContainsKey(kCandidateSdpMidName)
