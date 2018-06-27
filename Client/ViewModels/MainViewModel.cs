@@ -1909,7 +1909,7 @@ namespace PeerConnectionClient.ViewModels
         /// <returns>True if the application is ready to disconnect from a peer.</returns>
         private bool DisconnectFromPeerCommandCanExecute(object obj)
         {
-            return IsConnectedToPeer && IsReadyToDisconnect;
+            return IsConnectedToPeer;
         }
 
         /// <summary>

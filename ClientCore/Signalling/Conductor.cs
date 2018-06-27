@@ -789,6 +789,15 @@ namespace PeerConnectionClient.Signalling
 #endif
                     _localPeerConnection = null;
 
+                    if (_remotePeerConectionList.Count > 0)
+                    {
+                        _remotePeerConectionList[0].Close();
+
+                        _remotePeerConectionList.Clear();
+
+                        _remotePeerConectionIdList.Clear();                                    //OnReadyToConnect?.Invoke();
+                    }
+                    _signaller.ClearListenerIdMethod();
                     OnReadyToConnect?.Invoke();
 
                     GC.Collect(); // Ensure all references are truly dropped.
@@ -1098,20 +1107,37 @@ namespace PeerConnectionClient.Signalling
                     {
                         if (plugindataObject.GetNamedObject("data", null) != null)
                         {
-
                             if (dataObject.GetNamedArray("publishers", null) != null)
                             {
-
                                 JsonObject publisherObject = publisherArray.GetObjectAt(0);
                                 long idLong = (long)publisherObject.GetNamedNumber("id");
-
                                 _signaller.JoinRemoteParticipant(idLong);
                                 _remotePeerConectionIdList.Add(idLong);
                                 return;
                             }
+                            else if (dataObject.GetNamedNumber("leaving", 0) != 0)
+                            {
+                                if (_remotePeerConectionList[0] != null)
+                                {
+                                    _mediaStream = null;
 
+                                    _uiDispatcher.RunAsync(CoreDispatcherPriority.Normal, new DispatchedHandler(() =>
+                                    {
+                                        Conductor.Instance.Media.RemoveVideoTrackMediaElementPair(_peerVideoTrack);
+                                    })).AsTask().Wait();
+
+                                    _peerVideoTrack = null;
+
+                                    _remotePeerConectionList[0].Close(); // Slow, so do this after UI updated and camera turned off
+
+                                    _remotePeerConectionList.Clear();
+                                    _remotePeerConectionIdList.Clear();                                    //OnReadyToConnect?.Invoke();
+                                    _signaller.ClearListenerIdMethod();
+                                     
+                                    GC.Collect(); // Ensure all references are truly dropped.
+                                }                               
+                            }
                         }
-
                     }
                 }
 
@@ -1170,7 +1196,7 @@ namespace PeerConnectionClient.Signalling
                             }
                         }
 
-                        if (_localPeerConnection != null && !IsNullOrEmpty(type))
+                        if (!IsNullOrEmpty(type))
                         {
                             //if (type == "offer-loopback")
                             //{
@@ -1344,7 +1370,7 @@ namespace PeerConnectionClient.Signalling
         /// </summary>
         public async Task DisconnectFromPeer()
         {
-            await SendHangupMessage();
+            //await SendHangupMessage();
             ClosePeerConnection();
         }
 
