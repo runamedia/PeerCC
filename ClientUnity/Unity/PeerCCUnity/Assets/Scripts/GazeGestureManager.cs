@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using UnityEngine.XR.WSA.Input;
+using System;
 
 public class GazeGestureManager : MonoBehaviour
 {
@@ -11,7 +12,7 @@ public class GazeGestureManager : MonoBehaviour
     // Represents the hologram that is currently being gazed at.
     public GameObject FocusedObject { get; private set; }
 
-    GestureRecognizer recognizer;
+    //GestureRecognizer recognizer;
 
     public Button ConnectButton;
     public Button CallButton;
@@ -22,35 +23,49 @@ public class GazeGestureManager : MonoBehaviour
         Instance = this;
 
         // Set up a GestureRecognizer to detect Select gestures.
-        recognizer = new GestureRecognizer();
-        recognizer.Tapped += (args) =>
+
+        // Send an OnSelect message to the focused object and its ancestors.
+        if (FocusedObject != null)
         {
-            // Send an OnSelect message to the focused object and its ancestors.
-            if (FocusedObject != null)
+            if (FocusedObject.GetComponent<Button>() == ConnectButton)
             {
-                if (FocusedObject.GetComponent<Button>() == ConnectButton)
-                {
-                    ControlScript.Instance.OnConnectClick();
-                }
-                else if (FocusedObject.GetComponent<Button>() == CallButton)
-                {
-                    ControlScript.Instance.OnCallClick();
-                }
+                ControlScript.Instance.OnConnectClick();
             }
-        };
-        recognizer.StartCapturingGestures();
+            else if (FocusedObject.GetComponent<Button>() == CallButton)
+            {
+                ControlScript.Instance.OnCallClick();
+            }
+        }
     }
 
     // Update is called once per frame
     void Update()
     {
-        // Figure out which hologram is focused this frame.
+        if (FocusedObject != null)
+        {
+             if (FocusedObject.GetComponent<Button>() == ConnectButton)
+            {
+                if (Input.GetKeyDown("space"))
+                {
+                    ControlScript.Instance.OnConnectClick();
+
+                }
+            }
+            else if (FocusedObject.GetComponent<Button>() == CallButton)
+            {
+                if (Input.GetKeyDown("space"))
+                {
+                    ControlScript.Instance.OnCallClick();
+                }
+            }
+        }
+        //    // Figure out which hologram is focused this frame.
         GameObject oldFocusObject = FocusedObject;
 
-        // Do a raycast into the world based on the user's
-        // head position and orientation.
-        var headPosition = Camera.main.transform.position;
-        var gazeDirection = Camera.main.transform.forward;
+        ////    // Do a raycast into the world based on the user's
+        ////    // head position and orientation.
+        var headPosition = transform.position;
+        var gazeDirection = transform.forward;
 
         RaycastHit hitInfo;
         if (Physics.Raycast(headPosition, gazeDirection, out hitInfo))
@@ -90,13 +105,6 @@ public class GazeGestureManager : MonoBehaviour
                 FocusedObject = null;
             }
         }
-
-        // If the focused object changed this frame,
-        // start detecting fresh gestures again.
-        if (FocusedObject != oldFocusObject)
-        {
-            recognizer.CancelGestures();
-            recognizer.StartCapturingGestures();
-        }
-    }
+    } 
 }
+                

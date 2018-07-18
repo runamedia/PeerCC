@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using System.Collections.Generic;
 using UnityEngine.EventSystems;
+using UnityEngine.XR.WSA.Input;
 
 #if !UNITY_EDITOR
 using Windows.UI.Core;
@@ -83,13 +84,13 @@ public class ControlScript : MonoBehaviour
         Conductor.Instance.Initialize(CoreApplication.MainView.CoreWindow.Dispatcher);
         Conductor.Instance.EnableLogging(Conductor.LogLevel.Verbose);
 #endif
-        ServerAddressInputField.text = "peercc-server.ortclib.org";
+        ServerAddressInputField.text = "janus.runamedia.com";
     }
 
     private void OnEnable()
     {
         {
-            Plugin.CreateLocalMediaPlayback();
+            Plugin.CreateLocalMediaPlayback(); 
             IntPtr nativeTex = IntPtr.Zero;
             Plugin.GetLocalPrimaryTexture(LocalTextureWidth, LocalTextureHeight, out nativeTex);
             var primaryPlaybackTexture = Texture2D.CreateExternalTexture((int)LocalTextureWidth, (int)LocalTextureHeight, TextureFormat.BGRA32, false, false, nativeTex);
@@ -253,18 +254,19 @@ public class ControlScript : MonoBehaviour
         }
 #endif
     }
+   
 
-    private void Conductor_Initialized(bool succeeded)
-    {
-        if (succeeded)
+        private void Conductor_Initialized(bool succeeded)
         {
-            Initialize();
+            if (succeeded)
+            {
+                Initialize();
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine("Conductor initialization failed");
+            }
         }
-        else
-        {
-            System.Diagnostics.Debug.WriteLine("Conductor initialization failed");
-        }
-    }
 
     public void OnConnectClick()
     {
@@ -275,7 +277,7 @@ public class ControlScript : MonoBehaviour
             {
                 new Task(() =>
                 {
-                    Conductor.Instance.StartLogin(ServerAddressInputField.text, "8888");
+                    Conductor.Instance.StartLogin(ServerAddressInputField.text, "8088");
                 }).Start();
                 status = Status.Connecting;
             }
@@ -372,18 +374,18 @@ public class ControlScript : MonoBehaviour
     {
 #if !UNITY_EDITOR
         // A Peer is connected to the server event handler
-        Conductor.Instance.Signaller.OnPeerConnected += (peerId, peerName) =>
-        {
-            var task = RunOnUiThread(() =>
-            {
-                lock (this)
-                {
-                    Conductor.Peer peer = new Conductor.Peer { Id = peerId, Name = peerName };
-                    Conductor.Instance.AddPeer(peer);
-                    commandQueue.Add(new Command { type = CommandType.AddRemotePeer, remotePeer = peer });
-                }
-            });
-        };
+        //Conductor.Instance.Signaller.OnPeerConnected += (peerId, peerName) =>
+        //{
+        //    var task = RunOnUiThread(() =>
+        //    {
+        //        lock (this)
+        //        {
+        //            Conductor.Peer peer = new Conductor.Peer { Id = peerId, Name = peerName };
+        //            Conductor.Instance.AddPeer(peer);
+        //            commandQueue.Add(new Command { type = CommandType.AddRemotePeer, remotePeer = peer });
+        //        }
+        //    });
+        //};
 
         // A Peer is disconnected from the server event handler
         Conductor.Instance.Signaller.OnPeerDisconnected += peerId =>
