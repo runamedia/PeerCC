@@ -65,7 +65,7 @@ public class ControlScript : MonoBehaviour
 
     private Status status = Status.NotConnected;
     private List<Command> commandQueue = new List<Command>();
-    private int selectedPeerIndex = -1;
+    //private int selectedPeerIndex = -1;
 
     public ControlScript()
     {
@@ -221,11 +221,11 @@ public class ControlScript : MonoBehaviour
                     entry.eventID = EventTriggerType.PointerDown;
                     entry.callback.AddListener((data) => { OnRemotePeerItemClick((PointerEventData)data); });
                     trigger.triggers.Add(entry);
-                    if (selectedPeerIndex == -1)
-                    {
-                        textItem.GetComponent<Text>().fontStyle = FontStyle.Bold;
-                        selectedPeerIndex = PeerContent.transform.childCount - 1;
-                    }
+                    //if (selectedPeerIndex == -1)
+                    //{
+                    //    textItem.GetComponent<Text>().fontStyle = FontStyle.Bold;
+                    //    selectedPeerIndex = PeerContent.transform.childCount - 1;
+                    //}
                 }
                 else if (command.type == CommandType.RemoveRemotePeer)
                 {
@@ -234,18 +234,18 @@ public class ControlScript : MonoBehaviour
                         if (PeerContent.GetChild(i).GetComponent<Text>().text == command.remotePeer.Name)
                         {
                             PeerContent.GetChild(i).SetParent(null);
-                            if (selectedPeerIndex == i)
-                            {
-                                if (PeerContent.transform.childCount > 0)
-                                {
-                                    PeerContent.GetChild(0).GetComponent<Text>().fontStyle = FontStyle.Bold;
-                                    selectedPeerIndex = 0;
-                                }
-                                else
-                                {
-                                    selectedPeerIndex = -1;
-                                }
-                            }
+                            //if (selectedPeerIndex == i)
+                            //{
+                            //    if (PeerContent.transform.childCount > 0)
+                            //    {
+                            //        PeerContent.GetChild(0).GetComponent<Text>().fontStyle = FontStyle.Bold;
+                            //        selectedPeerIndex = 0;
+                            //    }
+                            //    else
+                            //    {
+                            //        selectedPeerIndex = -1;
+                            //    }
+                            //}
                             break;
                         }
                     }
@@ -286,10 +286,10 @@ public class ControlScript : MonoBehaviour
                 new Task(() =>
                 {
                     var task = Conductor.Instance.DisconnectFromServer();
-                }).Start();
+                }).Start();  
 
                 status = Status.Disconnecting;
-                selectedPeerIndex = -1;
+                //selectedPeerIndex = -1;
                 PeerContent.DetachChildren();
             }
             else
@@ -307,15 +307,17 @@ public class ControlScript : MonoBehaviour
         {
             if (status == Status.Connected)
             {
-                if (selectedPeerIndex == -1)
-                    return;
+            //    if (selectedPeerIndex == -1)
+            //        return;
                 new Task(() =>
                 {
-                    Conductor.Peer conductorPeer = Conductor.Instance.GetPeers()[selectedPeerIndex];
-                    if (conductorPeer != null)
-                    {
-                        Conductor.Instance.ConnectToPeer(conductorPeer);
-                    }
+                    //Conductor.Peer conductorPeer = Conductor.Instance.GetPeers()[selectedPeerIndex];
+                    //if (conductorPeer != null)
+                    //{
+                    //    Conductor.Instance.ConnectToPeer(conductorPeer);
+                    //}
+                    Conductor.Peer conductorPeer = new Conductor.Peer();
+                    Conductor.Instance.ConnectToPeer(conductorPeer);
                 }).Start();
                 status = Status.Calling;
             }
@@ -343,7 +345,7 @@ public class ControlScript : MonoBehaviour
             if (PeerContent.GetChild(i) == data.selectedObject.transform)
             {
                 data.selectedObject.GetComponent<Text>().fontStyle = FontStyle.Bold;
-                selectedPeerIndex = i;
+                //selectedPeerIndex = i;
             }
             else
             {
@@ -374,18 +376,18 @@ public class ControlScript : MonoBehaviour
     {
 #if !UNITY_EDITOR
         // A Peer is connected to the server event handler
-        //Conductor.Instance.Signaller.OnPeerConnected += (peerId, peerName) =>
-        //{
-        //    var task = RunOnUiThread(() =>
-        //    {
-        //        lock (this)
-        //        {
-        //            Conductor.Peer peer = new Conductor.Peer { Id = peerId, Name = peerName };
-        //            Conductor.Instance.AddPeer(peer);
-        //            commandQueue.Add(new Command { type = CommandType.AddRemotePeer, remotePeer = peer });
-        //        }
-        //    });
-        //};
+        Conductor.Instance.Signaller.OnPeerConnected += (peerId, peerName) =>
+        {
+            var task = RunOnUiThread(() =>
+            {
+                lock (this)
+                {
+                    //Conductor.Peer peer = new Conductor.Peer { Id = peerId, Name = peerName };
+                    //Conductor.Instance.AddPeer(peer);
+                    //commandQueue.Add(new Command { type = CommandType.AddRemotePeer, remotePeer = peer });
+                }
+            });
+        };
 
         // A Peer is disconnected from the server event handler
         Conductor.Instance.Signaller.OnPeerDisconnected += peerId =>
@@ -394,13 +396,13 @@ public class ControlScript : MonoBehaviour
             {
                 lock (this)
                 {
-                    var peerToRemove = Conductor.Instance.GetPeers().FirstOrDefault(p => p.Id == peerId);
-                    if (peerToRemove != null)
-                    {
-                        Conductor.Peer peer = new Conductor.Peer { Id = peerToRemove.Id, Name = peerToRemove.Name };
-                        Conductor.Instance.RemovePeer(peer);
-                        commandQueue.Add(new Command { type = CommandType.RemoveRemotePeer, remotePeer = peer });
-                    }
+                    //var peerToRemove = Conductor.Instance.GetPeers().FirstOrDefault(p => p.Id == peerId);
+                    //if (peerToRemove != null)
+                    //{
+                    //    Conductor.Peer peer = new Conductor.Peer { Id = peerToRemove.Id, Name = peerToRemove.Name };
+                    //    Conductor.Instance.RemovePeer(peer);
+                    //    commandQueue.Add(new Command { type = CommandType.RemoveRemotePeer, remotePeer = peer });
+                    //}
                 }
             });
         };
@@ -544,11 +546,11 @@ public class ControlScript : MonoBehaviour
 
         // Order the video codecs so that the stable VP8 is in front.
         var videoCodecList = Conductor.Instance.GetVideoCodecs();
-        Conductor.Instance.VideoCodec = videoCodecList.FirstOrDefault(c => c.Name == "H264");
+        Conductor.Instance.VideoCodec = videoCodecList.FirstOrDefault(c => c.Name == "VP8");
         System.Diagnostics.Debug.WriteLine("Selected video codec - " + Conductor.Instance.VideoCodec.Name);
 
-        uint preferredWidth = 896;
-        uint preferredHeght = 504;
+        uint preferredWidth = 640;
+        uint preferredHeght = 480;
         uint preferredFrameRate = 15;
         uint minSizeDiff = uint.MaxValue;
         Conductor.CaptureCapability selectedCapability = null;
