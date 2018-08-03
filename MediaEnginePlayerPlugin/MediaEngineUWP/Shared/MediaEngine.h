@@ -20,6 +20,7 @@
 // std c++
 #include <memory>
 #include <vector>
+#include <map>
 
 // windows api's
 #include <windows.h>

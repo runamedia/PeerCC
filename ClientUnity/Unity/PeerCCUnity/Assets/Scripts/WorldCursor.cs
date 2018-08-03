@@ -15,7 +15,6 @@ public class WorldCursor : MonoBehaviour
     private bool callButtonSelected = false;
     public float speed = 120f;
     public float sensitivity = 0.005f;
-    CharacterController player;
     float moveUD;
     float moveLR;
     float rotX;
@@ -27,8 +26,6 @@ public class WorldCursor : MonoBehaviour
     {
         // Grab the mesh renderer that's on the same object as this script.
         meshRenderer = Cursor.gameObject.GetComponentInChildren<MeshRenderer>();
-
-        player = GetComponent<CharacterController>();
     }
     // Update is called once per frame
     void Update()
@@ -36,14 +33,9 @@ public class WorldCursor : MonoBehaviour
         moveUD = Input.GetAxis("Vertical") * speed;
         moveLR = Input.GetAxis("Horizontal") * speed;
 
-        rotX = Input.GetAxis("Mouse X") * sensitivity;
-        rotY = Input.GetAxis("Mouse Y") * sensitivity;
-
         Vector3 movement = new Vector3(moveLR, moveUD, 0);
-        transform.Rotate(rotY, rotX, 0f);
-
-        movement = transform.rotation * movement;
-        player.Move(movement * Time.deltaTime);
+        
+        transform.Translate(moveLR * Time.deltaTime, moveUD * Time.deltaTime, 0);
 
         ////Do a raycast into the world based on the user's
         // //head position and orientation.
@@ -52,6 +44,7 @@ public class WorldCursor : MonoBehaviour
         
         Ray ray = new Ray(headPosition, gazeDirection);
         Debug.DrawRay(headPosition, gazeDirection * 10, Color.red);
+        Cursor.transform.position = new Vector3(transform.position.x, transform.position.y, -40);
         if (Physics.Raycast(ray, out hit_info, 1000))
         {
             //    // If the raycast hit a hologram...

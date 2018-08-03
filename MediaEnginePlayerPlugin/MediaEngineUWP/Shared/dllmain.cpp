@@ -25,8 +25,7 @@ static UnityGfxRenderer s_DeviceType = kUnityGfxRenderernullptr;
 static IUnityInterfaces* s_UnityInterfaces = nullptr;
 static IUnityGraphics* s_Graphics = nullptr;
 
-static MEPlayer^ s_localPlayer;
-static MEPlayer^ s_remotePlayer;
+static std::map<std::wstring, MEPlayer^> s_PlayerMap;
 
 static Microsoft::WRL::ComPtr<ABI::Windows::Media::IMediaExtensionManager> s_mediaExtensionManager;
 static Microsoft::WRL::ComPtr<ABI::Windows::Foundation::Collections::IMap<HSTRING, IInspectable*>> s_extensionManagerProperties;
@@ -98,122 +97,61 @@ STDAPI DllCanUnloadNow()
     return module.GetObjectCount() == 0 ? S_OK : S_FALSE;
 }
 
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CreateLocalMediaPlayback()
+extern "C"  void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CreateMediaPlayback(WCHAR* playerId)
 {
-	Log(Log_Level_Info, L"CMediaEnginePlayer::CreateLocalMediaPlayback()");
+	Log(Log_Level_Info, L"CMediaEnginePlayer::CreateMediaPlayback()");
 
 	if (nullptr == s_UnityInterfaces)
 		return;
 
-	if (s_DeviceType == kUnityGfxRendererD3D11)
-	{
-		IUnityGraphicsD3D11* d3d = s_UnityInterfaces->Get<IUnityGraphicsD3D11>();
-		s_localPlayer = ref new MEPlayer(d3d->GetDevice(), L"SharedLocalTextureHandle", s_extensionManagerProperties);
-	}
-}
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CreateRemoteMediaPlayback()
-{
-	Log(Log_Level_Info, L"CMediaEnginePlayer::CreateRemoteMediaPlayback()");
-
-	if (nullptr == s_UnityInterfaces)
-		return;
+	static int i = 0;
 
 	if (s_DeviceType == kUnityGfxRendererD3D11)
 	{
 		IUnityGraphicsD3D11* d3d = s_UnityInterfaces->Get<IUnityGraphicsD3D11>();
-		s_remotePlayer = ref new MEPlayer(d3d->GetDevice(), L"SharedRemoteTextureHandle", s_extensionManagerProperties);
-	}
+		MEPlayer^ player = ref new MEPlayer(d3d->GetDevice(), "SharedVideoTexture" + (i++).ToString(), s_extensionManagerProperties);
+		s_PlayerMap[playerId] = player;
+	} 
 }
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ReleaseLocalMediaPlayback()
+extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ReleaseMediaPlayback(WCHAR* playerId)
 {
-    if (s_localPlayer != nullptr)
-    {
-		s_localPlayer->Pause();
-		s_localPlayer->Shutdown();
-		s_localPlayer = nullptr;
-    }
-}
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API ReleaseRemoteMediaPlayback()
-{
-	if (s_remotePlayer != nullptr)
+	if (s_PlayerMap.find(playerId) != s_PlayerMap.end())
 	{
-		s_remotePlayer->Pause();
-		s_remotePlayer->Shutdown();
-		s_remotePlayer = nullptr;
+		s_PlayerMap[playerId]->Pause();
+		s_PlayerMap[playerId]->Shutdown();
+		s_PlayerMap.erase(playerId);
 	}
 }
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API GetLocalPrimaryTexture(_In_ UINT32 width, _In_ UINT32 height, _COM_Outptr_ void** playbackSRV)
+extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API GetPrimaryTexture(WCHAR* playerId, _In_ UINT32 width, _In_ UINT32 height, _COM_Outptr_ void** playbackSRV)
 {
-	if (s_localPlayer != nullptr)
-		s_localPlayer->GetPrimaryTexture(width, height, playbackSRV);
+	if (s_PlayerMap.find(playerId) != s_PlayerMap.end())
+		s_PlayerMap[playerId]->GetPrimaryTexture(width, height, playbackSRV);
 }
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API GetRemotePrimaryTexture(_In_ UINT32 width, _In_ UINT32 height, _COM_Outptr_ void** playbackSRV)
+extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API LoadMediaStreamSource(WCHAR* playerId, Windows::Media::Core::IMediaStreamSource^ mediaSourceHandle)
 {
-	if (s_remotePlayer != nullptr)
-		s_remotePlayer->GetPrimaryTexture(width, height, playbackSRV);
-}
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API LoadLocalMediaStreamSource(Windows::Media::Core::IMediaStreamSource^ mediaSourceHandle)
-{
-	if (mediaSourceHandle != nullptr && s_localPlayer != nullptr)
+	if (mediaSourceHandle != nullptr && s_PlayerMap.find(playerId) != s_PlayerMap.end())
 	{
-		s_localPlayer->SetMediaStreamSource(mediaSourceHandle);
+		s_PlayerMap[playerId]->SetMediaStreamSource(mediaSourceHandle);
 	}
 }
 
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnloadLocalMediaStreamSource()
+extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnloadMediaStreamSource(WCHAR* playerId)
 {
-	if (s_localPlayer != nullptr)
+	if (s_PlayerMap.find(playerId) != s_PlayerMap.end())
 	{
-		s_localPlayer->SetMediaStreamSource(nullptr);
+		s_PlayerMap[playerId]->SetMediaStreamSource(nullptr);
 	}
 }
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API LoadRemoteMediaStreamSource(Windows::Media::Core::IMediaStreamSource^ mediaSourceHandle)
+extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API Play(WCHAR* playerId)
 {
-	if (mediaSourceHandle != nullptr && s_remotePlayer != nullptr)
-	{
-		s_remotePlayer->SetMediaStreamSource(mediaSourceHandle);
-	}
+	if (s_PlayerMap.find(playerId) != s_PlayerMap.end())
+		s_PlayerMap[playerId]->Play();
 }
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnloadRemoteMediaStreamSource()
+extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API Pause(WCHAR* playerId)
 {
-	if (s_remotePlayer != nullptr)
-	{
-		s_remotePlayer->SetMediaStreamSource(nullptr);
-	}
+    if (s_PlayerMap.find(playerId) != s_PlayerMap.end())
+		s_PlayerMap[playerId]->Pause();
 }
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API LocalPlay()
-{
-	if (s_localPlayer != nullptr)
-		s_localPlayer->Play();
-}
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API RemotePlay()
-{
-	if (s_remotePlayer != nullptr)
-		s_remotePlayer->Play();
-}
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API LocalPause()
-{
-    if (s_localPlayer != nullptr)
-		s_localPlayer->Pause();
-}
-
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API RemotePause()
-{
-	if (s_remotePlayer != nullptr)
-		s_remotePlayer->Pause();
-}
-
 // --------------------------------------------------------------------------
 // UnitySetInterfaces
 
