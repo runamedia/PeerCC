@@ -222,7 +222,7 @@ namespace PeerConnectionClient.Signalling
                 }
                 if (_remotePeerConectionList.Count != 0)
                 {
-                    _remotePeerConectionList[0].EtwStatsEnabled = value;
+                    _remotePeerConectionList[_remotePeerConectionList.Count - 1].EtwStatsEnabled = value;                   
                 }
 #endif
             }
@@ -554,8 +554,7 @@ namespace PeerConnectionClient.Signalling
                 }
                 if (_remotePeerConectionList.Count != 0)
                 {
-                    _remotePeerConectionList[0].ConnectionHealthStatsEnabled = value;
-
+                    _remotePeerConectionList[_remotePeerConectionList.Count - 1].ConnectionHealthStatsEnabled = value;                   
                 }
 #endif
             }
@@ -915,7 +914,7 @@ namespace PeerConnectionClient.Signalling
 #endif
             }
 
-            OnAddRemoteStream?.Invoke();
+             OnAddRemoteStream?.Invoke();
         }
 
         /// <summary>
@@ -1250,7 +1249,7 @@ namespace PeerConnectionClient.Signalling
                             }
                             else if (type == "offer")
                             {
-                                await _remotePeerConectionList[0].SetRemoteDescription(new RTCSessionDescription(messageType, sdp));
+                                await _remotePeerConectionList[_remotePeerConectionList.Count - 1].SetRemoteDescription(new RTCSessionDescription(messageType, sdp));
                             }
 #if ORTCLIB
                             if ((messageType == RTCSessionDescriptionSignalingType.SdpOffer) ||
@@ -1259,8 +1258,8 @@ namespace PeerConnectionClient.Signalling
                             if (messageType == RTCSdpType.Offer)
 #endif
                             {
-                                var answer = await _remotePeerConectionList[0].CreateAnswer();
-                                await _remotePeerConectionList[0].SetLocalDescription(answer);
+                                var answer = await _remotePeerConectionList[_remotePeerConectionList.Count - 1].CreateAnswer();
+                                await _remotePeerConectionList[_remotePeerConectionList.Count - 1].SetLocalDescription(answer);
                                 // Send answer
                                 SendSdp(answer);
 #if ORTCLIB

@@ -197,11 +197,11 @@ namespace PeerConnectionClient.Signalling
                 
 
                  httpRequest = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
-                           "Host: janus.runamedia.com:8088\r\n" +
-                           "Content-Type: application/json\r\n" +
-                           "Cache-Control: no-cache\r\n" +
-                           "content-length: 123\r\n\r\n" +
-                           "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"publisher\",\"display\":\"1234\"}},\"transaction\":\"1hjTLwgqfREf\"}}", _sessionId, _publisherPluginHandleId);
+                "Host: janus.runamedia.com:8088\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Cache-Control: no-cache\r\n" +
+                "content-length: 123\r\n\r\n" +
+                "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"publisher\",\"display\":\"1234\"}},\"transaction\":\"1hjTLwgqfREf\"}}", _sessionId, _publisherPluginHandleId);
 
                 _state = State.JOINING_ROOM;
                 await ControlSocketRequestAsync(httpRequest);
@@ -235,13 +235,20 @@ namespace PeerConnectionClient.Signalling
 
             await ControlSocketRequestAsync(httpRequest);
 
-
+            long pluginHandleId = 0;
+            for (int i = 0; i < _listenerPluginHandleIdList.Count; i++)
+            {
+                if (i ==_listenerPluginHandleIdList.Count - 1)
+                {
+                    pluginHandleId = _listenerPluginHandleIdList[i];
+                }
+            }
             httpRequest = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
                 "Host: janus.runamedia.com:8088\r\n" +
                 "Content-Type: application/json\r\n" +
                 "Cache-Control: no-cache\r\n" +
                 "content-length:153\r\n\r\n" +
-                "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"listener\",\"feed\":{2},\"private_id\":3551483193}},\"transaction\":\"Hw4kBkQNGfC3\"}}", _sessionId, _listenerPluginHandleIdList[0], feed);
+                "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"listener\",\"feed\":{2},\"private_id\":3551483193}},\"transaction\":\"Hw4kBkQNGfC3\"}}", _sessionId, pluginHandleId, feed);
 
             await ControlSocketRequestAsync(httpRequest);
         }
@@ -836,8 +843,15 @@ namespace PeerConnectionClient.Signalling
             string buffer="";
 
             JsonObject jsonObject = JsonObject.Parse(message);
-         
-      
+            long pluginHandleId = 0;
+            for (int i = 0; i < _listenerPluginHandleIdList.Count; i++)
+            {
+                if (i == _listenerPluginHandleIdList.Count - 1)
+                {
+                    pluginHandleId = _listenerPluginHandleIdList[i];
+                }
+            }
+
             if (jsonObject.GetNamedString("type", buffer) == "offer")
             {
                 string bodyMessage = "{\"janus\":\"message\",\"body\":{\"request\":\"configure\",\"audio\":true,\"video\":true},\"transaction\":\"Ts5cRiKPVcP5\",\"jsep\":" + message + "}";
@@ -856,7 +870,7 @@ namespace PeerConnectionClient.Signalling
             {   
                 string bodyMessage = "{\"janus\":\"trickle\",\"candidate\":" + message + "," + "\"transaction\":\"pF9TenPRqgnI\"" + "}";
 
-                long _pluginHandleId = counter == 0 ? _publisherPluginHandleId : _listenerPluginHandleIdList[0]; 
+                long _pluginHandleId = counter == 0 ? _publisherPluginHandleId : pluginHandleId; 
                    
                 buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
                     "Host: janus.runamedia.com:8088\r\n" +
@@ -879,7 +893,7 @@ namespace PeerConnectionClient.Signalling
                     "Content-Length: {2}\r\n" +
                     "\r\n" +
                     "{3}",
-                    _sessionId, _listenerPluginHandleIdList[0], bodyMessage.Length, bodyMessage);
+                    _sessionId, pluginHandleId, bodyMessage.Length, bodyMessage);
                 counter++; 
             }
             

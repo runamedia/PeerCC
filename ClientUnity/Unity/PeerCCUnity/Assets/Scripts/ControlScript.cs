@@ -703,8 +703,7 @@ public class ControlScript : MonoBehaviour
         rawImage = gameObjectList[gameObjectList.Count - 1].AddComponent<RawImage>();
         rawImage.color = Color.black;
         rawImage.material = Material;
-        rawImage.texture = Texture;
-                                     
+        rawImage.texture = Texture;                                     
     }
     
     private void ChangePositionAndDimensions()
