@@ -34,7 +34,6 @@ public class ControlScript : MonoBehaviour
     
 
     public RawImage LocalVideoImage;
-    RawImage[, ] remoteVideoImage;
 
     public InputField ServerAddressInputField;
     public Button ConnectButton;
@@ -48,10 +47,12 @@ public class ControlScript : MonoBehaviour
 
     int remotePanelCounter = 0;
     int lateCounter = 0;
-    string[,] remotePanelName;
+
+    List<GameObject> gameObjectList;
+    List<string> namePanelList;
+    RawImage rawImage;
 
     RectTransform rect;
-    GameObject[,] panelMatrix;
 
     int col = 0;
     int row = 0;
@@ -111,9 +112,9 @@ public class ControlScript : MonoBehaviour
     private void Start()
     {
         Instance = this;
-        panelMatrix = new GameObject[row, col];
-        remotePanelName = new string[row, col];
-        remoteVideoImage = new RawImage[row, col];
+
+        gameObjectList = new List<GameObject>();
+        namePanelList = new List<string>();
 #if !UNITY_EDITOR
         Conductor.Instance.Initialized += Conductor_Initialized;
         Conductor.Instance.Initialize(CoreApplication.MainView.CoreWindow.Dispatcher);
@@ -135,17 +136,17 @@ public class ControlScript : MonoBehaviour
 
     private void CreateMedia()
     {
-        for (int i = 0; i < row; i++)
+        for (int i = 0; i < gameObjectList.Count ; i++)
         {
-            for (int j = 0; j < col; j++)
+            if (i == remotePanelCounter - 1)
             {
-                Plugin.CreateMediaPlayback(remotePanelName[i, j]);
+                Plugin.CreateMediaPlayback(namePanelList[i]);
                 IntPtr nativeTex = IntPtr.Zero;
-                Plugin.GetPrimaryTexture(remotePanelName[i, j], RemoteTextureWidth, RemoteTextureHeight, out nativeTex);
+                Plugin.GetPrimaryTexture(namePanelList[i], RemoteTextureWidth, RemoteTextureHeight, out nativeTex);
                 var primaryPlaybackTexture = Texture2D.CreateExternalTexture((int)RemoteTextureWidth, (int)RemoteTextureHeight, TextureFormat.BGRA32, false, false, nativeTex);
-                remoteVideoImage[i, j].texture = primaryPlaybackTexture;
+                rawImage.texture = primaryPlaybackTexture;
             }
-        }
+        }       
     }
 
     private void OnDisable()
@@ -156,15 +157,23 @@ public class ControlScript : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (lateCounter < remotePanelCounter)
+        lock (this)
         {
-            CreateRemotePanel();
-            CreateMedia();
-            lateCounter++;
-            UpdateEvent.Set();
-        }
-       
+            if (lateCounter < remotePanelCounter)
+            {
+                CreateRemotePanel();
+                CreateMedia();
+                lateCounter++;
+                UpdateEvent.Set();
+            }
+            if (Input.GetKeyDown("n"))
+            {
+                remotePanelCounter++;
+                CreateRemotePanel();
+            }
+        }       
     }
+
     private void Update()
     {
 #if !UNITY_EDITOR
@@ -551,12 +560,12 @@ public class ControlScript : MonoBehaviour
                     if (status == Status.EndingCall || status == Status.InCall)
                     {
                         Plugin.UnloadMediaStreamSource("LocalVideo");
-                        for (int i = 0; i < row; i++)
+                        for (int i = 0; i < gameObjectList.Count; i++)
                         {
-                            for (int j = 0; j < col; j++)
+                            if (i == remotePanelCounter - 1)
                             {
-                                Plugin.UnloadMediaStreamSource(panelMatrix[i, j].name);
-                            }
+                                Plugin.UnloadMediaStreamSource(namePanelList[i]);
+                            }                           
                         }
                         status = Status.Connected;
                         commandQueue.Add(new Command { type = CommandType.SetConnected });
@@ -638,22 +647,19 @@ public class ControlScript : MonoBehaviour
             {
                 for (int i = 0; i < row; i++)
                 {
-                    for (int j = 0; j < col; j++)
+                    if (status == Status.InCall || status == Status.Connected)
                     {
-                        if (status == Status.InCall || status == Status.Connected)
-                        {
-                            IMediaSource source;
-                            if (Conductor.Instance.VideoCodec.Name == "H264")
-                                source = Conductor.Instance.CreateRemoteMediaStreamSource("H264");
-                            else
-                                source = Conductor.Instance.CreateRemoteMediaStreamSource("I420");
-                            Plugin.LoadMediaStreamSource(remotePanelName[i, j], (MediaStreamSource)source);
-                        }
+                        IMediaSource source;
+                        if (Conductor.Instance.VideoCodec.Name == "H264")
+                            source = Conductor.Instance.CreateRemoteMediaStreamSource("H264");
                         else
-                        {
-                            System.Diagnostics.Debug.WriteLine("Conductor.OnAddRemoteStream() - wrong status - " + status);
-                        }
+                            source = Conductor.Instance.CreateRemoteMediaStreamSource("I420");
+                        Plugin.LoadMediaStreamSource(namePanelList[i], (MediaStreamSource)source);
                     }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine("Conductor.OnAddRemoteStream() - wrong status - " + status);
+                    }  
                 }
             }
         });
@@ -662,8 +668,6 @@ public class ControlScript : MonoBehaviour
 
     private void CreateRemotePanel()
     {
-        DestroyPanel();
-
         if (remotePanelCounter == 1)
         {
             col++;
@@ -684,39 +688,23 @@ public class ControlScript : MonoBehaviour
         else if (row != col)
         {
             row++;
-        }
-
-        panelMatrix = new GameObject[row, col];
-        remotePanelName = new string[row, col];
-        AddToMatrix();
+        }      
+        AddToList();
         ChangePositionAndDimensions();
     }
 
-    private void AddToMatrix()
+    private void AddToList()
     {
         int counter = remotePanelCounter;
 
-        for (int i = 0; i < row; i++)
-        {
-            for (int j = 0; j < col; j++)
-            {
-                if (counter > 0)
-                {
-                    --counter;
-                    panelMatrix[i, j] = new GameObject("Panel" + remotePanelCounter);
-                    remotePanelName[i, j] = panelMatrix[i, j].name;
-                    panelMatrix[i, j].transform.SetParent(Canvas.transform, false);
-                    remoteVideoImage[i, j] = panelMatrix[i, j].AddComponent<RawImage>();
-                    remoteVideoImage[i, j].color = Color.black;
-                    remoteVideoImage[i, j].material = Material;
-                    remoteVideoImage[i, j].texture = Texture;
-                }
-                else
-                {
-                    panelMatrix[i, j] = null;
-                }
-            }
-        }
+        gameObjectList.Add(new GameObject("Panel" + remotePanelCounter));
+        namePanelList.Add(gameObjectList[gameObjectList.Count - 1].name);
+        gameObjectList[gameObjectList.Count - 1].transform.SetParent(Canvas.transform, false);
+        rawImage = gameObjectList[gameObjectList.Count - 1].AddComponent<RawImage>();
+        rawImage.color = Color.black;
+        rawImage.material = Material;
+        rawImage.texture = Texture;
+                                     
     }
     
     private void ChangePositionAndDimensions()
@@ -726,52 +714,36 @@ public class ControlScript : MonoBehaviour
         xDimensions = xRemoteDimensions / col;
         yDimensions = yRemoteDimensions / row;
 
-        for (int i = 0; i < row; i++)
+        for (int i = 0; i < gameObjectList.Count; i++)
         {
-            for (int j = 0; j < col; j++)
+            rect = gameObjectList[i].GetComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(xDimensions - 10, yDimensions - 10);
+
+            if (i == 0)
             {
-
-                if (panelMatrix[i, j] != null)
+                xPos = xRemoteDimensions / (col * 2) - xRemoteDimensions / 2;
+            } 
+            else if(i % col == 0)
+            {
+                xPos = xRemoteDimensions / (col * 2) - xRemoteDimensions / 2;
+            }
+            else
+            {
+                xPos += xRemoteDimensions / col;
+            }
+            if (row >= 2)
+            {
+                if (i == 0)
                 {
-                    rect = panelMatrix[i, j].GetComponent<RectTransform>();
-                    rect.sizeDelta = new Vector2(xDimensions - 1, yDimensions - 1);
-
-                    if (j == 0)
-                    {
-                        xPos = xRemoteDimensions / (col * 2) - xRemoteDimensions / 2;
-                    }
-                    else
-                    {
-                        xPos += xRemoteDimensions / col;
-                    }
-                    if (row >= 2)
-                    {
-                        if (i == 0)
-                        {
-                            yPos = yRemoteDimensions / 2 - yRemoteDimensions / (row * 2);
-                        }
-                        else if (j == 0)
-                        {
-                            yPos -= yRemoteDimensions / row;
-                        }
-                    }
-                    rect.anchoredPosition = new Vector2(xPos, yPos);
+                    yPos = yRemoteDimensions / 2 - yRemoteDimensions / (row * 2);
+                }
+                else if (i % col == 0)
+                {
+                    yPos -= yRemoteDimensions / row;
                 }
             }
-        }
-    }
-
-    private void DestroyPanel()
-    {
-        if (panelMatrix.Length > 0)
-        {
-            for (int i = 0; i < row; i++)
-            {
-                for (int j = 0; j < col; j++)
-                {
-                    Destroy(panelMatrix[i, j]);
-                }
-            }
+            rect.anchoredPosition = new Vector2(xPos, yPos);
+            
         }
     }
 
