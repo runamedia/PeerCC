@@ -25,13 +25,10 @@ public class ControlScript : MonoBehaviour
 {
     public static ControlScript Instance { get; private set; }
 
-    AutoResetEvent UpdateEvent = new AutoResetEvent(false);
-
     public uint LocalTextureWidth = 160;
     public uint LocalTextureHeight = 120;
     public uint RemoteTextureWidth = 640;
     public uint RemoteTextureHeight = 480;
-    
 
     public RawImage LocalVideoImage;
 
@@ -44,9 +41,6 @@ public class ControlScript : MonoBehaviour
     public Canvas Canvas;
     public Material Material;
     public Texture Texture;
-
-    int remotePanelCounter = 0;
-    int lateCounter = 0;
 
     List<GameObject> gameObjectList;
     List<string> namePanelList;
@@ -85,8 +79,11 @@ public class ControlScript : MonoBehaviour
         SetNotConnected,
         SetConnected,
         SetInCall,
-        AddRemotePeer,
-        RemoveRemotePeer
+        AttachLocalPanel,
+        DetachLocalPanel,
+        AddRemotePanel,
+        RemoveRemotePanel,
+        RemoveAllRemotePanel
     }
 
     private struct Command
@@ -112,7 +109,6 @@ public class ControlScript : MonoBehaviour
     private void Start()
     {
         Instance = this;
-
         gameObjectList = new List<GameObject>();
         namePanelList = new List<string>();
 #if !UNITY_EDITOR
@@ -134,27 +130,14 @@ public class ControlScript : MonoBehaviour
         }
     }
 
-    private void CreateMedia()
-    {
-        for (int i = 0; i < gameObjectList.Count ; i++)
-        {
-            if (i == remotePanelCounter - 1)
-            {
-                Plugin.CreateMediaPlayback(namePanelList[i]);
-                IntPtr nativeTex = IntPtr.Zero;
-                Plugin.GetPrimaryTexture(namePanelList[i], RemoteTextureWidth, RemoteTextureHeight, out nativeTex);
-                var primaryPlaybackTexture = Texture2D.CreateExternalTexture((int)RemoteTextureWidth, (int)RemoteTextureHeight, TextureFormat.BGRA32, false, false, nativeTex);
-                rawImage.texture = primaryPlaybackTexture;
-            }
-        }       
-    }
-
     private void OnDisable()
     {
         LocalVideoImage.texture = null;
         Plugin.ReleaseMediaPlayback("LocalVideo");
+        LocalVideoImage.texture = Texture;
     }
 
+#if false
     private void LateUpdate()
     {
         lock (this)
@@ -166,19 +149,31 @@ public class ControlScript : MonoBehaviour
                 lateCounter++;
                 UpdateEvent.Set();
             }
+            else if (lateCounter > remotePanelCounter)
+            {
+                for (int i = 0; i < gameObjectList.Count; i++)
+                {
+                    DestroyObject(gameObjectList[i]);
+                }
+                lateCounter--;
+                gameObjectList.Clear();
+                namePanelList.Clear();
+                row = 0;
+                col = 0;
+            }
             if (Input.GetKeyDown("n"))
             {
                 remotePanelCounter++;
                 CreateRemotePanel();
             }
-        }       
+        }
     }
-
-    private void Update()
+#endif
+    private void LateUpdate()
     {
 #if !UNITY_EDITOR
         lock (this)
-        { 
+        {
             switch (status)
             {
                 case Status.NotConnected:
@@ -271,7 +266,13 @@ public class ControlScript : MonoBehaviour
                     default:
                         break;
                 }
-                if (command.type == CommandType.AddRemotePeer)
+                if (command.type == CommandType.AttachLocalPanel)
+                {
+                }
+                else if (command.type == CommandType.DetachLocalPanel)
+                {
+                }
+                else if (command.type == CommandType.AddRemotePanel)
                 {
                     //GameObject textItem = (GameObject)Instantiate(TextItemPreftab);
                     //textItem.transform.SetParent(PeerContent);
@@ -286,29 +287,99 @@ public class ControlScript : MonoBehaviour
                     //    textItem.GetComponent<Text>().fontStyle = FontStyle.Bold;
                     //    selectedPeerIndex = PeerContent.transform.childCount - 1;
                     //}
-                }
-                else if (command.type == CommandType.RemoveRemotePeer)
-                {
-                    for (int i = 0; i < PeerContent.transform.childCount; i++)
+                    CreateRemotePanel("Panel-" + command.remotePeer.Id.ToString());
+                    CreateMedia("Panel-" + command.remotePeer.Id.ToString());
+#if !UNITY_EDITOR
+                    var task = RunOnUiThread(() =>
                     {
-                        if (PeerContent.GetChild(i).GetComponent<Text>().text == command.remotePeer.Name)
+                        lock (this)
                         {
-                            PeerContent.GetChild(i).SetParent(null);
-                            //if (selectedPeerIndex == i)
-                            //{
-                            //    if (PeerContent.transform.childCount > 0)
-                            //    {
-                            //        PeerContent.GetChild(0).GetComponent<Text>().fontStyle = FontStyle.Bold;
-                            //        selectedPeerIndex = 0;
-                            //    }
-                            //    else
-                            //    {
-                            //        selectedPeerIndex = -1;
-                            //    }
-                            //}
-                            break;
+                            if (status == Status.InCall || status == Status.Connected)
+                            {
+                                IMediaSource source;
+                                if (Conductor.Instance.VideoCodec.Name == "H264")
+                                    source = Conductor.Instance.CreateRemoteMediaStreamSource(command.remotePeer.Id, "H264");
+                                else
+                                    source = Conductor.Instance.CreateRemoteMediaStreamSource(command.remotePeer.Id, "I420");
+                                Plugin.LoadMediaStreamSource("Panel-" + command.remotePeer.Id.ToString(), (MediaStreamSource)source);
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine("Conductor.OnAddRemoteStream() - wrong status - " + status);
+                            }
+                        }
+                    });
+#endif 
+                }
+                else if (command.type == CommandType.RemoveRemotePanel)
+                {
+                    //for (int i = 0; i < PeerContent.transform.childCount; i++)
+                    //{
+                    //    if (PeerContent.GetChild(i).GetComponent<Text>().text == command.remotePeer.Name)
+                    //    {
+                    //        PeerContent.GetChild(i).SetParent(null);
+                    //        if (selectedPeerIndex == i)
+                    //        {
+                    //            if (PeerContent.transform.childCount > 0)
+                    //            {
+                    //                PeerContent.GetChild(0).GetComponent<Text>().fontStyle = FontStyle.Bold;
+                    //                selectedPeerIndex = 0;
+                    //            }
+                    //            else
+                    //            {
+                    //                selectedPeerIndex = -1;
+                    //            }
+                    //        }
+                    //        break;
+                    //    }
+                    //}
+                    int indexForRemove = 0;
+                    for (int i = 0; i < gameObjectList.Count; i++)
+                    {
+                        if (namePanelList[i] == "Panel-" + command.remotePeer.Id.ToString())
+                        {
+                            DestroyObject(gameObjectList[i]);
+                            indexForRemove = i;
                         }
                     }
+                    ReleaseMedia("Panel-" + command.remotePeer.Id.ToString());
+#if !UNITY_EDITOR
+                    var task = RunOnUiThread(() =>
+                    {
+                        lock (this)
+                        {
+                            if (status == Status.InCall || status == Status.Connected)
+                            {
+                                Plugin.UnloadMediaStreamSource("Panel-" + command.remotePeer.Id.ToString());
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine("Conductor.OnRemoveRemoteStream() - wrong status - " + status);
+                            }
+                        }
+                    });
+                    gameObjectList.RemoveAt(indexForRemove);
+                    namePanelList.RemoveAt(indexForRemove);
+                    RemoveRemotePanel();
+#endif
+                }
+                else if (command.type == CommandType.RemoveAllRemotePanel)
+                {
+                    foreach (var item in namePanelList)
+                    {
+                        Plugin.UnloadMediaStreamSource(item);
+                        ReleaseMedia(item);
+                    }
+                    foreach (var item in gameObjectList)
+                    {
+                        DestroyObject(item);
+                    }
+                    gameObjectList.Clear();
+                    namePanelList.Clear();
+                    row = 0;
+                    col = 0;
+                    status = Status.Connected;
+                    commandQueue.Add(new Command { type = CommandType.SetConnected});
                 }
             }
         }
@@ -375,8 +446,7 @@ public class ControlScript : MonoBehaviour
                     //{
                     //    Conductor.Instance.ConnectToPeer(conductorPeer);
                     //}
-                    Conductor.Peer conductorPeer = new Conductor.Peer();
-                    Conductor.Instance.ConnectToPeer(conductorPeer);
+                    Conductor.Instance.ConnectToPeer(null);
                 }).Start();
                 status = Status.Calling;
             }
@@ -437,33 +507,33 @@ public class ControlScript : MonoBehaviour
         // A Peer is connected to the server event handler
         Conductor.Instance.Signaller.OnPeerConnected += (peerId, peerName) =>
         {
-            var task = RunOnUiThread(() =>
-            {
-                lock (this)
-                {
-                    Conductor.Peer peer = new Conductor.Peer { Id = peerId, Name = peerName };
-                    Conductor.Instance.AddPeer(peer);
-                    commandQueue.Add(new Command { type = CommandType.AddRemotePeer, remotePeer = peer });
-                }
-            });
+            //var task = RunOnUiThread(() =>
+            //{
+            //    lock (this)
+            //    {
+            //        Conductor.Peer peer = new Conductor.Peer { Id = peerId, Name = peerName };
+            //        Conductor.Instance.AddPeer(peer);
+            //        commandQueue.Add(new Command { type = CommandType.AddRemotePeer, remotePeer = peer });
+            //    }
+            //});
         };
 
         // A Peer is disconnected from the server event handler
         Conductor.Instance.Signaller.OnPeerDisconnected += peerId =>
         {
-            var task = RunOnUiThread(() =>
-            {
-                lock (this)
-                {
-                    var peerToRemove = Conductor.Instance.GetPeers().FirstOrDefault(p => p.Id == peerId);
-                    if (peerToRemove != null)
-                    {
-                        Conductor.Peer peer = new Conductor.Peer { Id = peerToRemove.Id, Name = peerToRemove.Name };
-                        Conductor.Instance.RemovePeer(peer);
-                        commandQueue.Add(new Command { type = CommandType.RemoveRemotePeer, remotePeer = peer });
-                    }
-                }
-            });
+            //var task = RunOnUiThread(() =>
+            //{
+            //    lock (this)
+            //    {
+            //        var peerToRemove = Conductor.Instance.GetPeers().FirstOrDefault(p => p.Id == peerId);
+            //        if (peerToRemove != null)
+            //        {
+            //            Conductor.Peer peer = new Conductor.Peer { Id = peerToRemove.Id, Name = peerToRemove.Name };
+            //            Conductor.Instance.RemovePeer(peer);
+            //            commandQueue.Add(new Command { type = CommandType.RemoveRemotePeer, remotePeer = peer });
+            //        }
+            //    }
+            //});
         };
 
         // The user is Signed in to the server event handler
@@ -560,15 +630,7 @@ public class ControlScript : MonoBehaviour
                     if (status == Status.EndingCall || status == Status.InCall)
                     {
                         Plugin.UnloadMediaStreamSource("LocalVideo");
-                        for (int i = 0; i < gameObjectList.Count; i++)
-                        {
-                            if (i == remotePanelCounter - 1)
-                            {
-                                Plugin.UnloadMediaStreamSource(namePanelList[i]);
-                            }                           
-                        }
-                        status = Status.Connected;
-                        commandQueue.Add(new Command { type = CommandType.SetConnected });
+                        commandQueue.Add(new Command { type = CommandType.RemoveAllRemotePanel });
                     }
                     else
                     {
@@ -636,48 +698,62 @@ public class ControlScript : MonoBehaviour
 #endif
     }
 
-    private void Conductor_OnAddRemoteStream()
+    private void Conductor_OnAddRemoteStream(Conductor.Peer peer)
     {
-        remotePanelCounter++;
-        UpdateEvent.WaitOne();
-#if !UNITY_EDITOR
-        var task1 = RunOnUiThread(() =>
+        var task = RunOnUiThread(() =>
         {
             lock (this)
             {
-                for (int i = 0; i < row; i++)
-                {
-                    if (status == Status.InCall || status == Status.Connected)
-                    {
-                        IMediaSource source;
-                        if (Conductor.Instance.VideoCodec.Name == "H264")
-                            source = Conductor.Instance.CreateRemoteMediaStreamSource("H264");
-                        else
-                            source = Conductor.Instance.CreateRemoteMediaStreamSource("I420");
-                        Plugin.LoadMediaStreamSource(namePanelList[i], (MediaStreamSource)source);
-                    }
-                    else
-                    {
-                        System.Diagnostics.Debug.WriteLine("Conductor.OnAddRemoteStream() - wrong status - " + status);
-                    }  
-                }
+                commandQueue.Add(new Command { type = CommandType.AddRemotePanel, remotePeer = peer });
             }
         });
+#if false
+        lock (lockObj)
+        {
+            remotePanelCounter++;
+            UpdateEvent.WaitOne();
+
+#if !UNITY_EDITOR
+            var task = RunOnUiThread(() =>
+            {
+                lock (this)
+                {
+                    for (int i = 0; i < namePanelList.Count; i++)
+                    {
+                        if (status == Status.InCall || status == Status.Connected)
+                        {
+                            IMediaSource source;
+                            if (Conductor.Instance.VideoCodec.Name == "H264")
+                                source = Conductor.Instance.CreateRemoteMediaStreamSource("H264");
+                            else
+                                source = Conductor.Instance.CreateRemoteMediaStreamSource("I420");
+                            Plugin.LoadMediaStreamSource(namePanelList[namePanelList.Count - 1], (MediaStreamSource)source);
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine("Conductor.OnAddRemoteStream() - wrong status - " + status);
+                        }
+                        //mediaSourceCounter++;
+                    }
+                }
+            });
+        }
+#endif
 #endif
     }
 
-    private void CreateRemotePanel()
+    private void CreateRemotePanel(string panelName)
     {
-        if (remotePanelCounter == 1)
+        if (gameObjectList.Count() + 1 == 1)
         {
             col++;
             row++;
         }
-        if (remotePanelCounter == 2)
+        if (gameObjectList.Count() + 1 == 2)
         {
             col++;
         }
-        else if (remotePanelCounter <= (row * col))
+        else if (gameObjectList.Count() + 1 <= (row * col))
         {
 
         }
@@ -689,15 +765,40 @@ public class ControlScript : MonoBehaviour
         {
             row++;
         }      
-        AddToList();
+        AddPanelToList(panelName);
         ChangePositionAndDimensions();
     }
 
-    private void AddToList()
+    private void RemoveRemotePanel()
     {
-        int counter = remotePanelCounter;
+        if (gameObjectList.Count > 0)
+        {
+            if (row == col)
+            {
+                if (gameObjectList.Count + row == row * col)
+                {
+                    row--;
+                }
+            }
+            else if (row != col)
+            {
+                if (gameObjectList.Count + row == row * col)
+                {
+                    col--;
+                }
+            }
+            ChangePositionAndDimensions();
+        }
+        else
+        {
+            row = 0;
+            col = 0;
+        }
+    }
 
-        gameObjectList.Add(new GameObject("Panel" + remotePanelCounter));
+    private void AddPanelToList(string panelName)
+    {
+        gameObjectList.Add(new GameObject(panelName));
         namePanelList.Add(gameObjectList[gameObjectList.Count - 1].name);
         gameObjectList[gameObjectList.Count - 1].transform.SetParent(Canvas.transform, false);
         rawImage = gameObjectList[gameObjectList.Count - 1].AddComponent<RawImage>();
@@ -721,8 +822,8 @@ public class ControlScript : MonoBehaviour
             if (i == 0)
             {
                 xPos = xRemoteDimensions / (col * 2) - xRemoteDimensions / 2;
-            } 
-            else if(i % col == 0)
+            }
+            else if (i % col == 0)
             {
                 xPos = xRemoteDimensions / (col * 2) - xRemoteDimensions / 2;
             }
@@ -742,30 +843,31 @@ public class ControlScript : MonoBehaviour
                 }
             }
             rect.anchoredPosition = new Vector2(xPos, yPos);
-            
         }
     }
 
-    private void Conductor_OnRemoveRemoteStream()
+    private void CreateMedia(String panelName)
     {
-#if !UNITY_EDITOR
+        Plugin.CreateMediaPlayback(panelName);
+        IntPtr nativeTex = IntPtr.Zero;
+        Plugin.GetPrimaryTexture(panelName, RemoteTextureWidth, RemoteTextureHeight, out nativeTex);
+        var primaryPlaybackTexture = Texture2D.CreateExternalTexture((int)RemoteTextureWidth, (int)RemoteTextureHeight, TextureFormat.BGRA32, false, false, nativeTex);
+        rawImage.texture = primaryPlaybackTexture;
+    }
+
+    private void ReleaseMedia(String panelName)
+    {
+        Plugin.ReleaseMediaPlayback(panelName);
+    }
+    private void Conductor_OnRemoveRemoteStream(Conductor.Peer peer)
+    {
         var task = RunOnUiThread(() =>
         {
             lock (this)
             {
-                if (status == Status.InCall)
-                {
-                }
-                else if (status == Status.Connected)
-                {
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine("Conductor.OnRemoveRemoteStream() - wrong status - " + status);
-                }
+                commandQueue.Add(new Command { type = CommandType.RemoveRemotePanel, remotePeer = peer });
             }
         });
-#endif
     }
 
     private void Conductor_OnAddLocalStream()

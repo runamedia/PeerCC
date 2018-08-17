@@ -46,7 +46,6 @@ namespace PeerConnectionClient.Signalling
         public event MessageFromPeerDelegate OnMessageFromPeer;
         public event ServerConnectionFailureDelegate OnServerConnectionFailure;
 
-        static int counter = 0;
         /// <summary>
         /// Creates an instance of a Signaller.
         /// </summary>
@@ -89,9 +88,9 @@ namespace PeerConnectionClient.Signalling
         private string _clientName;
         private long _sessionId;
         private long _publisherPluginHandleId;
-        private List<long> _listenerPluginHandleIdList = new List<long>();
-        private Dictionary<int, string> _peers = new Dictionary<int, string>();
-
+        private long _currentListenerId = -1;
+        private Dictionary<long, long> _listenerPluginHandleIdDictionary = new Dictionary<long, long>();
+        private Dictionary<int, string> _peers = new Dictionary<int, string>(); 
         /// <summary>
         /// Checks if connected to the server.
         /// </summary>
@@ -205,9 +204,6 @@ namespace PeerConnectionClient.Signalling
 
                 _state = State.JOINING_ROOM;
                 await ControlSocketRequestAsync(httpRequest);
-                
-
-                
 
                 if (_state == State.JOINING_ROOM)
                 {
@@ -224,31 +220,38 @@ namespace PeerConnectionClient.Signalling
                 Debug.WriteLine("[Error] Signaling: Failed to connect to server: " + ex.Message);
             }
         }
-        public async void JoinRemoteParticipant(long feed)
+
+        public async Task JoinRemoteParticipant(long participantId)
         {
+            _currentListenerId = participantId;
+
             string httpRequest = String.Format("POST /janus/{0} HTTP/1.0\r\n" +
-                       "Host: janus.runamedia.com:8088\r\n" +
-                       "Content-Type: application/json\r\n" +
-                       "Cache-Control: no-cache\r\n" +
-                       "content-length: 122\r\n\r\n" +
-                       "{{\"janus\":\"attach\",\"plugin\":\"janus.plugin.videoroom\",\"opaque_id\":\"videoroomtest-lGqMjJeP1GYe\",\"transaction\":\"Hw4kBkQNGfC3\"}}", _sessionId);
+                "Host: janus.runamedia.com:8088\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Cache-Control: no-cache\r\n" +
+                "content-length: 122\r\n\r\n" +
+                "{{\"janus\":\"attach\",\"plugin\":\"janus.plugin.videoroom\",\"opaque_id\":\"videoroomtest-lGqMjJeP1GYe\",\"transaction\":\"Hw4kBkQNGfC3\"}}", _sessionId);
 
             await ControlSocketRequestAsync(httpRequest);
-
-            long pluginHandleId = 0;
-            for (int i = 0; i < _listenerPluginHandleIdList.Count; i++)
-            {
-                if (i ==_listenerPluginHandleIdList.Count - 1)
-                {
-                    pluginHandleId = _listenerPluginHandleIdList[i];
-                }
-            }
+           
             httpRequest = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
                 "Host: janus.runamedia.com:8088\r\n" +
                 "Content-Type: application/json\r\n" +
                 "Cache-Control: no-cache\r\n" +
                 "content-length:153\r\n\r\n" +
-                "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"listener\",\"feed\":{2},\"private_id\":3551483193}},\"transaction\":\"Hw4kBkQNGfC3\"}}", _sessionId, pluginHandleId, feed);
+                "{{\"janus\":\"message\",\"body\":{{\"request\":\"join\",\"room\":1234,\"ptype\":\"listener\",\"feed\":{2},\"private_id\":3551483193}},\"transaction\":\"Hw4kBkQNGfC3\"}}", _sessionId, _listenerPluginHandleIdDictionary[participantId], participantId);
+
+            await ControlSocketRequestAsync(httpRequest);
+        }
+
+        public async Task DetachRemoteParticipant(long participantId)
+        {
+            string httpRequest = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
+                "Host: janus.runamedia.com:8088\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Cache-Control: no-cache\r\n" +
+                "content-length: 47\r\n\r\n" +
+                "{{\"janus\":\"detach\",\"transaction\":\"Hw4kBkQNGfC3\"}}", _sessionId, _listenerPluginHandleIdDictionary[participantId]);
 
             await ControlSocketRequestAsync(httpRequest);
         }
@@ -610,8 +613,7 @@ namespace PeerConnectionClient.Signalling
                     Debug.WriteLine("Transaction:" + transactionString);
                     
                 }
-
-                if (_state == State.ROOM_JOINED)
+                else if (_state == State.ROOM_JOINED)
                 {
                     int pos = eoh + 4;
                     string message = buffer.Substring(pos, buffer.Length - pos);
@@ -620,8 +622,8 @@ namespace PeerConnectionClient.Signalling
                     {
                         JsonObject dataObject = messageObject.GetNamedObject("data", null);
                         long idLong = (long)dataObject.GetNamedNumber("id");
-                       
-                        _listenerPluginHandleIdList.Add(idLong);
+
+                        _listenerPluginHandleIdDictionary[_currentListenerId] = idLong;
                     }
                     string ackString = messageObject.GetNamedString("janus");
                     Debug.WriteLine(ackString);
@@ -636,12 +638,18 @@ namespace PeerConnectionClient.Signalling
 
             return true;
         }
-        public void ClearListenerIdMethod()
+
+        public void ClearListenerIdMethod(long participantId)
         {
-            List<long> list = new List<long>();
-            list = _listenerPluginHandleIdList;
-            list.Clear();
+            _listenerPluginHandleIdDictionary.Remove(participantId);
         }
+
+        public void ClearAllListenerIdMethod()
+        {
+            _listenerPluginHandleIdDictionary.Clear();
+            
+        }
+
         /// <summary>
         /// Long lasting loop to get notified about connected/disconnected peers.
         /// </summary>
@@ -816,7 +824,7 @@ namespace PeerConnectionClient.Signalling
                 _hangingGetSocket = null;
             }
 
-            _peers.Clear();
+            //_peers.Clear();
             _state = State.NOT_CONNECTED;
         }
 
@@ -827,7 +835,7 @@ namespace PeerConnectionClient.Signalling
         /// <param name="message">Message to send.</param>
         /// <returns>True if the message was sent.</returns>
          JsonObject js;
-        public async Task<bool> SendToPeer(int peerId, string message)
+        public async Task<bool> SendToPeer(long participantId, string message)
         {
             if (_state != State.ROOM_JOINED)
             {
@@ -843,15 +851,7 @@ namespace PeerConnectionClient.Signalling
             string buffer="";
 
             JsonObject jsonObject = JsonObject.Parse(message);
-            long pluginHandleId = 0;
-            for (int i = 0; i < _listenerPluginHandleIdList.Count; i++)
-            {
-                if (i == _listenerPluginHandleIdList.Count - 1)
-                {
-                    pluginHandleId = _listenerPluginHandleIdList[i];
-                }
-            }
-
+          
             if (jsonObject.GetNamedString("type", buffer) == "offer")
             {
                 string bodyMessage = "{\"janus\":\"message\",\"body\":{\"request\":\"configure\",\"audio\":true,\"video\":true},\"transaction\":\"Ts5cRiKPVcP5\",\"jsep\":" + message + "}";
@@ -866,22 +866,6 @@ namespace PeerConnectionClient.Signalling
                     _sessionId, _publisherPluginHandleId, bodyMessage.Length, bodyMessage);
             }
 
-            if (jsonObject.GetNamedString("sdpMid", buffer) == "audio" || jsonObject.GetNamedString("sdpMid", buffer) == "video")
-            {   
-                string bodyMessage = "{\"janus\":\"trickle\",\"candidate\":" + message + "," + "\"transaction\":\"pF9TenPRqgnI\"" + "}";
-
-                long _pluginHandleId = counter == 0 ? _publisherPluginHandleId : pluginHandleId; 
-                   
-                buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
-                    "Host: janus.runamedia.com:8088\r\n" +
-                    "Content-Type: application/json\r\n" +
-                    "Cache-Control: no-cache\r\n" +
-                    "Content-Length: {2}\r\n" +
-                    "\r\n" +
-                    "{3}",
-                    _sessionId, _pluginHandleId, bodyMessage.Length, bodyMessage);      
-            }
-
             if (jsonObject.GetNamedString("type", buffer) == "answer")
             {
                 string bodyMessage = "{\"janus\":\"message\",\"body\":{\"request\":\"start\",\"room\":1234},\"transaction\":\"2WW3VhknPoWs\",\"jsep\":" + message + "}";
@@ -893,8 +877,24 @@ namespace PeerConnectionClient.Signalling
                     "Content-Length: {2}\r\n" +
                     "\r\n" +
                     "{3}",
-                    _sessionId, pluginHandleId, bodyMessage.Length, bodyMessage);
-                counter++; 
+                    _sessionId, _listenerPluginHandleIdDictionary[participantId], bodyMessage.Length, bodyMessage);
+            }
+
+           
+            if (jsonObject.GetNamedString("sdpMid", buffer) == "audio" || jsonObject.GetNamedString("sdpMid", buffer) == "video")
+            {
+                //participantId = _currentListenerId;
+                long handleId = participantId == -1 ? _publisherPluginHandleId : _listenerPluginHandleIdDictionary[participantId];
+                string bodyMessage = "{\"janus\":\"trickle\",\"candidate\":" + message + "," + "\"transaction\":\"pF9TenPRqgnI\"" + "}";
+
+                buffer = String.Format("POST /janus/{0}/{1} HTTP/1.0\r\n" +
+                    "Host: janus.runamedia.com:8088\r\n" +
+                    "Content-Type: application/json\r\n" +
+                    "Cache-Control: no-cache\r\n" +
+                    "Content-Length: {2}\r\n" +
+                    "\r\n" +
+                    "{3}",
+                    _sessionId, handleId, bodyMessage.Length, bodyMessage);
             }
             
             return await ControlSocketRequestAsync(buffer);  
@@ -906,7 +906,7 @@ namespace PeerConnectionClient.Signalling
         /// <param name="peerId">ID of the peer to send a message to.</param>
         /// <param name="json">The json message.</param>
         /// <returns>True if the message is sent.</returns>
-        public async Task<bool> SendToPeer(int peerId, IJsonValue json)
+        public async Task<bool> SendToPeer(long peerId, IJsonValue json)
         {
             string message = json.Stringify();
             return await SendToPeer(peerId, message);

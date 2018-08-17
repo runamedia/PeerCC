@@ -48,9 +48,160 @@ namespace PeerConnectionClient.Signalling
     {
         public class Peer
         {
-            public int Id { get; set; }
+            public Peer(long id, RTCPeerConnection peerConnection)
+            {
+                Id = id;
+                PeerConnection = peerConnection;
+            }
+
+            ~Peer()
+            {
+                _track = null;
+            }
+
+            public long Id { get; set; }
             public string Name { get; set; }
-        }
+            public RTCPeerConnection PeerConnection { get; set; }
+            public MediaVideoTrack Track
+            {
+                get
+                {
+                    return _track;
+                }
+            }
+
+            private MediaVideoTrack _track;
+
+#if ORTCLIB
+            /// <summary>
+            /// Invoked when the remote peer added a media track to the peer connection.
+            /// </summary>
+            public event Action<RTCTrackEvent> OnAddRemoteTrack;
+            private void PeerConnection_OnAddTrack(RTCTrackEvent evt)
+            {
+                OnAddRemoteTrack?.Invoke(evt);
+            }
+
+            /// <summary>
+            /// Invoked when the remote peer removed a media track from the peer connection.
+            /// </summary>
+            public event Action<RTCTrackEvent> OnRemoveTrack;
+            private void PeerConnection_OnRemoveTrack(RTCTrackEvent evt)
+            {
+                OnRemoveTrack?.Invoke(evt);
+            }
+#else
+            /// <summary>
+            /// Invoked when the remote peer added a media stream to the peer connection.
+            /// </summary>
+            public event Action<Peer> OnAddRemoteStream;
+            public void PeerConnection_OnAddStream(MediaStreamEvent evt)
+            {
+                _track = evt.Stream.GetVideoTracks().FirstOrDefault();
+                if (_track != null)
+                {
+#if UNITY_XAML
+                if (UnityPlayer.AppCallbacks.Instance.IsInitialized())
+                {
+                    UnityPlayer.AppCallbacks.Instance.InvokeOnAppThread(new UnityPlayer.AppCallbackItem(() =>
+                    {
+                        UnityEngine.GameObject go = UnityEngine.GameObject.Find("Control");
+                        if (VideoCodec.Name == "H264")
+                        {
+                            go.GetComponent<ControlScript>().CreateRemoteMediaStreamSource(_peerVideoTrack, "H264", "PEER");
+                        }
+                        else
+                        {
+                            go.GetComponent<ControlScript>().CreateRemoteMediaStreamSource(_peerVideoTrack, "I420", "PEER");
+                        }
+                    }
+                    ), false);
+                }
+#elif !UNITY
+                _media.AddVideoTrackMediaElementPair(_peerVideoTrack, PeerVideo, "PEER");
+#endif
+                }
+                OnAddRemoteStream?.Invoke(this);
+            }
+
+            /// <summary>
+            /// Invoked when the remote peer removed a media stream from the peer connection.
+            /// </summary>
+            public event Action<Peer> OnRemoveRemoteStream;
+            public void PeerConnection_OnRemoveStream(MediaStreamEvent evt)
+            {
+#if UNITY_XAML
+                if (UnityPlayer.AppCallbacks.Instance.IsInitialized())
+                {
+                    UnityPlayer.AppCallbacks.Instance.InvokeOnAppThread(new UnityPlayer.AppCallbackItem(() =>
+                    {
+                        UnityEngine.GameObject go = UnityEngine.GameObject.Find("Control");
+                        go.GetComponent<ControlScript>().DestroyRemoteMediaStreamSource();
+                    }
+                    ), false);
+                }
+#elif !UNITY
+                _media.RemoveVideoTrackMediaElementPair(_peerVideoTrack);
+#endif
+                OnRemoveRemoteStream?.Invoke(this);
+            }
+
+            /// <summary>
+            /// Called when WebRTC detects another ICE candidate. 
+            /// This candidate needs to be sent to the other peer.
+            /// </summary>
+            /// <param name="evt">Details about RTC Peer Connection Ice event.</param>
+            public event Action<Peer, IJsonValue> OnIceCandidate;
+            public void PeerConnection_OnIceCandidate(RTCPeerConnectionIceEvent evt)
+            {
+                if (evt.Candidate == null) // relevant: GlobalObserver::OnIceComplete in Org.WebRtc
+                {
+                    return;
+                }
+
+                double index = (double)evt.Candidate.SdpMLineIndex;
+
+                JsonObject json;
+#if ORTCLIB
+                if (RTCPeerConnectionSignalingMode.Json == _signalingMode)
+                {
+                    json = JsonObject.Parse(evt.Candidate.ToJsonString());
+                }
+                else
+#endif
+                {
+                    json = new JsonObject
+                        {
+                            {kCandidateSdpMidName, JsonValue.CreateStringValue(evt.Candidate.SdpMid)},
+                            {kCandidateSdpMlineIndexName, JsonValue.CreateNumberValue(index)},
+                            {kCandidateSdpName, JsonValue.CreateStringValue(evt.Candidate.Candidate)}
+                        };
+                }
+                Debug.WriteLine("Conductor: Sending ice candidate.\n" + json.Stringify());
+
+                OnIceCandidate?.Invoke(this, json);
+            }
+
+            /// <summary>
+            /// Invoked when new connection health stats are available.
+            /// Use ToggleConnectionHealthStats to turn on/of the connection health stats.
+            /// </summary>
+            public event Action<PeerConnectionHealthStats> OnConnectionHealthStats;
+            public void PeerConnection_OnConnectionHealthStats(RTCPeerConnectionHealthStats stats)
+            {
+                OnConnectionHealthStats?.Invoke(new PeerConnectionHealthStats
+                {
+                    ReceivedBytes = stats.ReceivedBytes,
+                    ReceivedKpbs = stats.ReceivedKpbs,
+                    SentBytes = stats.SentBytes,
+                    SentKbps = stats.SentKbps,
+                    RTT = stats.RTT,
+                    LocalCandidateType = stats.LocalCandidateType,
+                    RemoteCandidateType = stats.RemoteCandidateType
+                });
+            }
+#endif
+        } 
 
         public class IceServer
         {
@@ -147,7 +298,6 @@ namespace PeerConnectionClient.Signalling
         /// </summary>
         public Signaller Signaller => _signaller;
 
-        private MediaVideoTrack _peerVideoTrack;
         private MediaVideoTrack _selfVideoTrack;
 
         public MediaElement SelfVideo { get; set; }
@@ -178,8 +328,8 @@ namespace PeerConnectionClient.Signalling
         private static readonly string kSessionDescriptionJsonName = "session";
 #endif
         RTCPeerConnection _localPeerConnection;
-        List<RTCPeerConnection> _remotePeerConectionList = new List<RTCPeerConnection>();
-        List<long> _remotePeerConectionIdList = new List<long>();
+        Dictionary<long, Peer> _remotePeerDictionary = new Dictionary<long, Peer>();
+        List<long> _remotePeerIdList = new List<long>();
 
         readonly Media _media;
 
@@ -188,14 +338,11 @@ namespace PeerConnectionClient.Signalling
         /// </summary>
         public Media Media => _media;
 
-        private List<Peer> _peers = new List<Peer>();
-        private Peer _peer;
-        private MediaStream _mediaStream;
+        private MediaStream _localMediaStream;
         readonly List<RTCIceServer> _iceServers;
 
         private CoreDispatcher _uiDispatcher;
 
-        private int _peerId = -1;
         protected bool VideoEnabled = true;
         protected bool AudioEnabled = true;
         protected string SessionId;
@@ -220,9 +367,9 @@ namespace PeerConnectionClient.Signalling
                 {
                     _localPeerConnection.EtwStatsEnabled = value;
                 }
-                if (_remotePeerConectionList.Count != 0)
+                foreach (Peer peer in _remotePeerDictionary.Values)
                 {
-                    _remotePeerConectionList[_remotePeerConectionList.Count - 1].EtwStatsEnabled = value;                   
+                    peer.PeerConnection.EtwStatsEnabled = value;                   
                 }
 #endif
             }
@@ -552,9 +699,9 @@ namespace PeerConnectionClient.Signalling
                 {
                     _localPeerConnection.ConnectionHealthStatsEnabled = value;
                 }
-                if (_remotePeerConectionList.Count != 0)
+                foreach (Peer peer in _remotePeerDictionary.Values)
                 {
-                    _remotePeerConectionList[_remotePeerConectionList.Count - 1].ConnectionHealthStatsEnabled = value;                   
+                    peer.PeerConnection.ConnectionHealthStatsEnabled = value;
                 }
 #endif
             }
@@ -594,9 +741,8 @@ namespace PeerConnectionClient.Signalling
         /// Creates a peer connection.
         /// </summary>
         /// <returns>True if connection to a peer is successfully created.</returns>
-        private async Task<RTCPeerConnection> CreatePeerConnection(CancellationToken cancelationToken, bool createLocalStream)
+        private async Task<RTCPeerConnection> CreatePeerConnection(CancellationToken cancelationToken, long participantId)
         {
-            //Debug.Assert(_localPeerConnection == null);
             if (cancelationToken.IsCancellationRequested)
             {
                 return null;
@@ -633,20 +779,17 @@ namespace PeerConnectionClient.Signalling
 #if ORTCLIB
             OrtcStatsManager.Instance.Initialize(_peerConnection);
 #endif
-            OnPeerConnectionCreated?.Invoke();
 
-            peerConnection.OnIceCandidate += PeerConnection_OnIceCandidate;
 #if ORTCLIB
             _peerConnection.OnTrack += PeerConnection_OnAddTrack;
             _peerConnection.OnTrackGone += PeerConnection_OnRemoveTrack;
             _peerConnection.OnIceConnectionStateChange += () => { Debug.WriteLine("Conductor: Ice connection state change, state=" + (null != _peerConnection ? _peerConnection.IceConnectionState.ToString() : "closed")); };
-#else
-            peerConnection.OnAddStream += PeerConnection_OnAddStream;
-            peerConnection.OnRemoveStream += PeerConnection_OnRemoveStream;
-            peerConnection.OnConnectionHealthStats += PeerConnection_OnConnectionHealthStats;
 #endif
-            if (createLocalStream)
+            if (participantId < 0)
             {
+                peerConnection.OnIceCandidate += PeerConnection_OnIceCandidate;
+                peerConnection.OnConnectionHealthStats += PeerConnection_OnConnectionHealthStats;
+
                 Debug.WriteLine("Conductor: Getting user media.");
                 RTCMediaStreamConstraints mediaStreamConstraints = new RTCMediaStreamConstraints
                 {
@@ -669,10 +812,10 @@ namespace PeerConnectionClient.Signalling
                     RTCRtpCapabilities audioCapabilities = RTCRtpSender.GetCapabilities("audio");
                     RTCRtpCapabilities videoCapabilities = RTCRtpSender.GetCapabilities("video");
 
-                    _mediaStream = new MediaStream(tracks);
+                    _localMediaStream = new MediaStream(tracks);
                     Debug.WriteLine("Conductor: Adding local media stream.");
                     IList<MediaStream> mediaStreamList = new List<MediaStream>();
-                    mediaStreamList.Add(_mediaStream);
+                    mediaStreamList.Add(_localMediaStream);
                     foreach (var mediaStreamTrack in tracks)
                     {
                         //Create stream track configuration based on capabilities
@@ -692,7 +835,7 @@ namespace PeerConnectionClient.Signalling
                     }
                 }
 #else
-                _mediaStream = await _media.GetUserMedia(mediaStreamConstraints);
+                _localMediaStream = await _media.GetUserMedia(mediaStreamConstraints);
 #endif
 
                 if (cancelationToken.IsCancellationRequested)
@@ -702,9 +845,9 @@ namespace PeerConnectionClient.Signalling
 
 #if !ORTCLIB
                 Debug.WriteLine("Conductor: Adding local media stream.");
-                peerConnection.AddStream(_mediaStream);
+                peerConnection.AddStream(_localMediaStream);
 #endif
-                _selfVideoTrack = _mediaStream.GetVideoTracks().FirstOrDefault();
+                _selfVideoTrack = _localMediaStream.GetVideoTracks().FirstOrDefault();
                 if (_selfVideoTrack != null)
                 {
                     if (VideoLoopbackEnabled)
@@ -724,7 +867,7 @@ namespace PeerConnectionClient.Signalling
 #endif
                     }
                 }
-
+                OnPeerConnectionCreated?.Invoke();
                 OnAddLocalStream?.Invoke();
 
                 if (cancelationToken.IsCancellationRequested)
@@ -732,6 +875,24 @@ namespace PeerConnectionClient.Signalling
                     return null;
                 }
             }
+            else
+            {
+                Peer peer = new Peer(participantId, peerConnection);
+
+                peerConnection.OnAddStream += peer.PeerConnection_OnAddStream;
+                peerConnection.OnRemoveStream += peer.PeerConnection_OnRemoveStream;
+                peerConnection.OnIceCandidate += peer.PeerConnection_OnIceCandidate;
+                peerConnection.OnConnectionHealthStats += peer.PeerConnection_OnConnectionHealthStats;
+                peer.OnAddRemoteStream += Peer_OnAddRemoteStream;
+                peer.OnRemoveRemoteStream += Peer_OnRemoveRemoteStream;
+                peer.OnIceCandidate += Peer_OnIceCandidate;
+                peer.OnConnectionHealthStats += Peer_OnConnectionHealthStats;
+
+                _remotePeerDictionary[participantId] = peer;
+                OnPeerConnectionCreated?.Invoke();
+            }
+
+
             return peerConnection;
 
         }
@@ -745,16 +906,15 @@ namespace PeerConnectionClient.Signalling
             {
                 if (_localPeerConnection != null)
                 {
-                    _peerId = -1;
-                    if (_mediaStream != null)
+                    if (_localMediaStream != null)
                     {
-                        foreach (var track in _mediaStream.GetTracks())
-                        {
-                            _mediaStream.RemoveTrack(track);
+                        foreach (var track in _localMediaStream.GetTracks())
+                        {   
+                            _localMediaStream.RemoveTrack(track);
                             track.Stop();
                         }
                     }
-                    _mediaStream = null;
+                    _localMediaStream = null;
 
 #if UNITY_XAML
                     if (UnityPlayer.AppCallbacks.Instance.IsInitialized())
@@ -775,7 +935,6 @@ namespace PeerConnectionClient.Signalling
                     })).AsTask().Wait();
 #endif
 
-                    _peerVideoTrack = null;
                     _selfVideoTrack = null;
 
                     OnPeerConnectionClosed?.Invoke();
@@ -788,18 +947,19 @@ namespace PeerConnectionClient.Signalling
 #endif
                     _localPeerConnection = null;
 
-                    if (_remotePeerConectionList.Count > 0)
+                    if (_remotePeerDictionary.Count > 0)
                     {
-                        _remotePeerConectionList[0].Close();
-
-                        _remotePeerConectionList.Clear();
-
-                        _remotePeerConectionIdList.Clear();                                    //OnReadyToConnect?.Invoke();
+                        foreach (Peer peer in _remotePeerDictionary.Values)
+                            peer.PeerConnection.Close();
+                        _remotePeerDictionary.Clear();
+                        _remotePeerIdList.Clear();
+                        _signaller.ClearAllListenerIdMethod();
                     }
-                    _signaller.ClearListenerIdMethod();
-                    OnReadyToConnect?.Invoke();
-
+                    
+                    
                     GC.Collect(); // Ensure all references are truly dropped.
+
+                    OnReadyToConnect?.Invoke();
                 }
             }
         }
@@ -809,24 +969,19 @@ namespace PeerConnectionClient.Signalling
             return Media.CreateMedia().CreateMediaStreamSource(_selfVideoTrack, type, "SELF");
         }
 
-        public IMediaSource CreateRemoteMediaStreamSource(String type)
+        public IMediaSource CreateRemoteMediaStreamSource(long participantId, String type)
         {
-            return Media.CreateMedia().CreateMediaStreamSource(_peerVideoTrack, type, "PEER");
-        }
-
-        public void AddPeer(Peer peer)
-        {
-            _peers.Add(peer);
-        }
-
-        public void RemovePeer(Peer peer)
-        {
-            _peers.RemoveAll(p => p.Id == peer.Id);
+            return Media.CreateMedia().CreateMediaStreamSource(_remotePeerDictionary[participantId].Track, type, "PEER");
         }
 
         public List<Peer> GetPeers()
         {
-            return new List<Peer>(_peers);
+            return new List<Peer>(_remotePeerDictionary.Values);
+        }
+
+        private void PeerConnection_OnIceCandidate1(RTCPeerConnectionIceEvent evt)
+        {
+            long participantId = -1;
         }
 
         /// <summary>
@@ -836,7 +991,8 @@ namespace PeerConnectionClient.Signalling
         /// <param name="evt">Details about RTC Peer Connection Ice event.</param>
         private void PeerConnection_OnIceCandidate(RTCPeerConnectionIceEvent evt)
         {
-
+            long participantId = -1;
+           
             if (evt.Candidate == null) // relevant: GlobalObserver::OnIceComplete in Org.WebRtc
             {
                 return;
@@ -861,82 +1017,30 @@ namespace PeerConnectionClient.Signalling
                 };
             }
             Debug.WriteLine("Conductor: Sending ice candidate.\n" + json.Stringify());
-            SendMessage(json);
+            SendMessage(participantId, json);
         }
-
-#if ORTCLIB
-        /// <summary>
-        /// Invoked when the remote peer added a media track to the peer connection.
-        /// </summary>
-        public event Action<RTCTrackEvent> OnAddRemoteTrack;
-        private void PeerConnection_OnAddTrack(RTCTrackEvent evt)
-        {
-            OnAddRemoteTrack?.Invoke(evt);
-        }
-
-        /// <summary>
-        /// Invoked when the remote peer removed a media track from the peer connection.
-        /// </summary>
-        public event Action<RTCTrackEvent> OnRemoveTrack;
-        private void PeerConnection_OnRemoveTrack(RTCTrackEvent evt)
-        {
-            OnRemoveTrack?.Invoke(evt);
-        }
-#else
+   
         /// <summary>
         /// Invoked when the remote peer added a media stream to the peer connection.
         /// </summary>
-        public event Action OnAddRemoteStream;
-        private void PeerConnection_OnAddStream(MediaStreamEvent evt)
+        public event Action<Peer> OnAddRemoteStream;
+        private void Peer_OnAddRemoteStream(Peer peer)
         {
-            _peerVideoTrack = evt.Stream.GetVideoTracks().FirstOrDefault();
-            if (_peerVideoTrack != null)
-            {
-#if UNITY_XAML
-                if (UnityPlayer.AppCallbacks.Instance.IsInitialized())
-                {
-                    UnityPlayer.AppCallbacks.Instance.InvokeOnAppThread(new UnityPlayer.AppCallbackItem(() =>
-                    {
-                        UnityEngine.GameObject go = UnityEngine.GameObject.Find("Control");
-                        if (VideoCodec.Name == "H264")
-                        {
-                            go.GetComponent<ControlScript>().CreateRemoteMediaStreamSource(_peerVideoTrack, "H264", "PEER");
-                        }
-                        else
-                        {
-                            go.GetComponent<ControlScript>().CreateRemoteMediaStreamSource(_peerVideoTrack, "I420", "PEER");
-                        }
-                    }
-                    ), false);
-                }
-#elif !UNITY
-                _media.AddVideoTrackMediaElementPair(_peerVideoTrack, PeerVideo, "PEER");
-#endif
-            }
-
-             OnAddRemoteStream?.Invoke();
+            OnAddRemoteStream?.Invoke(peer);
         }
 
         /// <summary>
         /// Invoked when the remote peer removed a media stream from the peer connection.
         /// </summary>
-        public event Action OnRemoveRemoteStream;
-        private void PeerConnection_OnRemoveStream(MediaStreamEvent evt)
+        public event Action<Peer> OnRemoveRemoteStream;
+        private void Peer_OnRemoveRemoteStream(Peer peer)
         {
-#if UNITY_XAML
-            if (UnityPlayer.AppCallbacks.Instance.IsInitialized())
-            {
-                UnityPlayer.AppCallbacks.Instance.InvokeOnAppThread(new UnityPlayer.AppCallbackItem(() =>
-                {
-                    UnityEngine.GameObject go = UnityEngine.GameObject.Find("Control");
-                    go.GetComponent<ControlScript>().DestroyRemoteMediaStreamSource();
-                }
-                ), false);
-            }
-#elif !UNITY
-            _media.RemoveVideoTrackMediaElementPair(_peerVideoTrack);
-#endif
-            OnRemoveRemoteStream?.Invoke();
+            OnRemoveRemoteStream?.Invoke(peer);
+        }
+
+        private void Peer_OnIceCandidate(Peer peer, IJsonValue message)
+        {
+            SendMessage(peer.Id, message);
         }
 
         /// <summary>
@@ -957,7 +1061,12 @@ namespace PeerConnectionClient.Signalling
                 RemoteCandidateType = stats.RemoteCandidateType
             });
         }
-#endif
+
+        public void Peer_OnConnectionHealthStats(PeerConnectionHealthStats stats)
+        {
+            OnConnectionHealthStats?.Invoke(stats); 
+        }
+
         /// <summary>
         /// Private constructor for singleton class.
         /// </summary>
@@ -986,11 +1095,8 @@ namespace PeerConnectionClient.Signalling
         /// <summary>
         /// Handler for Signaller's OnPeerHangup event.
         /// </summary>
-        /// <param name="peerId">ID of the peer to hung up the call with.</param>
         void Signaller_OnPeerHangup(int peerId)
         {
-            if (peerId != _peerId) return;
-
             Debug.WriteLine("Conductor: Our peer hung up.");
             ClosePeerConnection();
         }
@@ -1016,9 +1122,6 @@ namespace PeerConnectionClient.Signalling
         /// <param name="peerId">ID of disconnected peer.</param>
         private void Signaller_OnPeerDisconnected(int peerId)
         {
-            // is the same peer or peer_id does not exist (0) in case of 500 Error
-            if (peerId != _peerId && peerId != 0) return;
-
             Debug.WriteLine("Conductor: Our peer disconnected.");
             ClosePeerConnection();
         }
@@ -1032,7 +1135,7 @@ namespace PeerConnectionClient.Signalling
             _signalingMode = Helper.SignalingModeForClientName(peer.Name);
 #endif
             _connectToPeerCancelationTokenSource = new System.Threading.CancellationTokenSource();
-            _connectToPeerTask = CreatePeerConnection(_connectToPeerCancelationTokenSource.Token, true);
+            _connectToPeerTask = CreatePeerConnection(_connectToPeerCancelationTokenSource.Token, -1);
             _localPeerConnection = await _connectToPeerTask;
             _connectToPeerTask = null;
             _connectToPeerCancelationTokenSource.Dispose();
@@ -1050,8 +1153,7 @@ namespace PeerConnectionClient.Signalling
 #endif
                 await _localPeerConnection.SetLocalDescription(offer);
                 Debug.WriteLine("Conductor: Sending offer.");
-                SendSdp(offer);
-
+                SendSdp(-1, offer);
 
 #if ORTCLIB
                 OrtcStatsManager.Instance.StartCallWatch(SessionId, true);
@@ -1075,19 +1177,10 @@ namespace PeerConnectionClient.Signalling
         /// <param name="message">Message from the peer.</param>
         private void Signaller_OnMessageFromPeer(int peerId, string message)
         {
-
             //Debug.WriteLine("Message : "+message);
             Task.Run(async () =>
             {
-                Debug.Assert(_peerId == peerId || _peerId == -1);
                 Debug.Assert(message.Length > 0);
-
-
-                if (_peerId != peerId && _peerId != -1)
-                {
-                    Debug.WriteLine("[Error] Conductor: Received a message from unknown peer while already in a conversation with a different peer.");
-                    return;
-                }
 
                 if (!JsonObject.TryParse(message, out JsonObject jMessage))
                 {
@@ -1097,44 +1190,46 @@ namespace PeerConnectionClient.Signalling
                 JsonObject jsonObj = JsonObject.Parse(message);
 
                 JsonObject plugindataObject = jsonObj.GetNamedObject("plugindata", null);
+                JsonObject dataObject = plugindataObject.GetNamedObject("data", null);
                 if (plugindataObject != null)
                 {
-                    JsonObject dataObject = plugindataObject.GetNamedObject("data", null);
-
                     JsonArray publisherArray = dataObject.GetNamedArray("publishers", null);
                     if (jsonObj.GetNamedObject("plugindata", null) != null)
                     {
                         if (plugindataObject.GetNamedObject("data", null) != null)
                         {
                             if (dataObject.GetNamedArray("publishers", null) != null)
-                            {
-                                JsonObject publisherObject = publisherArray.GetObjectAt(0);
-                                long idLong = (long)publisherObject.GetNamedNumber("id");
-                                _signaller.JoinRemoteParticipant(idLong);
-                                _remotePeerConectionIdList.Add(idLong);
+                             { 
+                                for (uint i = 0; i < publisherArray.Count; i++)
+                                {
+                                    JsonObject publisherObject = publisherArray.GetObjectAt(i);
+                                    long idLong = (long)publisherObject.GetNamedNumber("id");
+                                    _remotePeerIdList.Add(idLong);
+                                    await _signaller.JoinRemoteParticipant(idLong);
+                                }
                                 return;
                             }
                             else if (dataObject.GetNamedNumber("leaving", 0) != 0)
                             {
-                                if (_remotePeerConectionList[0] != null)
-                                {
-                                    _mediaStream = null;
+                                long idLong = (long)(dataObject.GetNamedNumber("leaving"));
 
-                                    _uiDispatcher.RunAsync(CoreDispatcherPriority.Normal, new DispatchedHandler(() =>
-                                    {
-                                        Conductor.Instance.Media.RemoveVideoTrackMediaElementPair(_peerVideoTrack);
-                                    })).AsTask().Wait();
+                                _remotePeerIdList.Remove(idLong);
 
-                                    _peerVideoTrack = null;
+                                Peer peer = _remotePeerDictionary[idLong];
+                                _remotePeerDictionary[idLong].PeerConnection.Close(); // Slow, so do this after UI updated and camera turned off
+                                _remotePeerDictionary.Remove(idLong);
+                                _signaller.ClearListenerIdMethod(idLong);
+                                
+                                OnRemoveRemoteStream?.Invoke(peer);
 
-                                    _remotePeerConectionList[0].Close(); // Slow, so do this after UI updated and camera turned off
-
-                                    _remotePeerConectionList.Clear();
-                                    _remotePeerConectionIdList.Clear();                                    //OnReadyToConnect?.Invoke();
-                                    _signaller.ClearListenerIdMethod();
-                                     
-                                    GC.Collect(); // Ensure all references are truly dropped.
-                                }                               
+                                GC.Collect(); // Ensure all references are truly dropped.
+                                
+                                return;        
+                            }
+                            else if (dataObject.GetNamedNumber("unpublished", 0) != 0)
+                            {
+                                long idLong = (long)(dataObject.GetNamedNumber("unpublished"));
+                                await _signaller.DetachRemoteParticipant(idLong);
                             }
                         }
                     }
@@ -1151,7 +1246,7 @@ namespace PeerConnectionClient.Signalling
 #if ORTCLIB
                         bool created = false;
 #endif
-                        if (_remotePeerConectionIdList.Count != 0)
+                        if (_remotePeerIdList.Count != 0)
                         {
                             if (!IsNullOrEmpty(type))
                             {
@@ -1159,21 +1254,20 @@ namespace PeerConnectionClient.Signalling
                                 // about to get initiated. Otherwise ignore the
                                 // messages from peers which could be a result
                                 // of old (but not yet fully closed) connections.
-                                if (type == "offer" || type == "answer")
+                                if (type == "offer")
                                 {
-                                    //Debug.Assert(_peerId == -1);
-                                    //_peerId = peerId;
-
-                                    //IEnumerable<Peer> enumerablePeer = _peers.Where(x => x.Id == peerId);
-                                    //_peer = enumerablePeer.First();
+                                    long idLong = -1;
 #if ORTCLIB
                                     created = true;
                                     _signalingMode = Helper.SignalingModeForClientName(Peer.Name);
 #endif
+                                    //if (type == "answer")
+                                    //{
+                                        idLong = (long)dataObject.GetNamedNumber("id");
+                                    //}
                                     _connectToPeerCancelationTokenSource = new CancellationTokenSource();
-                                    _connectToPeerTask = CreatePeerConnection(_connectToPeerCancelationTokenSource.Token, false);
-                                    _remotePeerConectionList.Add(await _connectToPeerTask);
-                                    //_connectToPeerTask = null;
+                                    _connectToPeerTask = CreatePeerConnection(_connectToPeerCancelationTokenSource.Token, idLong);
+                                    await _connectToPeerTask;
                                     _connectToPeerCancelationTokenSource.Dispose();
                                     if (_connectToPeerTask == null)
                                     {
@@ -1242,6 +1336,12 @@ namespace PeerConnectionClient.Signalling
                                 default: Debug.Assert(false, type); break;
                             }
 #endif
+                            long idLong = -1;
+                            if (type == "offer")
+                            {
+                                idLong = (long)dataObject.GetNamedNumber("id");
+                            }
+
                             Debug.WriteLine("Conductor: Received session description: " + message);
                             if (type == "answer")
                             {
@@ -1249,7 +1349,7 @@ namespace PeerConnectionClient.Signalling
                             }
                             else if (type == "offer")
                             {
-                                await _remotePeerConectionList[_remotePeerConectionList.Count - 1].SetRemoteDescription(new RTCSessionDescription(messageType, sdp));
+                                await _remotePeerDictionary[idLong].PeerConnection.SetRemoteDescription(new RTCSessionDescription(messageType, sdp));
                             }
 #if ORTCLIB
                             if ((messageType == RTCSessionDescriptionSignalingType.SdpOffer) ||
@@ -1258,10 +1358,10 @@ namespace PeerConnectionClient.Signalling
                             if (messageType == RTCSdpType.Offer)
 #endif
                             {
-                                var answer = await _remotePeerConectionList[_remotePeerConectionList.Count - 1].CreateAnswer();
-                                await _remotePeerConectionList[_remotePeerConectionList.Count - 1].SetLocalDescription(answer);
+                                var answer = await _remotePeerDictionary[idLong].PeerConnection.CreateAnswer();
+                                await _remotePeerDictionary[idLong].PeerConnection.SetLocalDescription(answer);
                                 // Send answer
-                                SendSdp(answer);
+                                SendSdp(idLong, answer);
 #if ORTCLIB
                                 OrtcStatsManager.Instance.StartCallWatch(SessionId, false);
 #endif
@@ -1292,7 +1392,7 @@ namespace PeerConnectionClient.Signalling
                             return;
                         }
 #if ORTCLIB
-                                candidate = IsNullOrEmpty(sdpMid) ? RTCIceCandidate.FromSdpStringWithMLineIndex(sdp, (ushort)sdpMlineIndex) : RTCIceCandidate.FromSdpStringWithMid(sdp, sdpMid);
+                        candidate = IsNullOrEmpty(sdpMid) ? RTCIceCandidate.FromSdpStringWithMLineIndex(sdp, (ushort)sdpMlineIndex) : RTCIceCandidate.FromSdpStringWithMid(sdp, sdpMid);
 #else
                         candidate = new RTCIceCandidate(sdp, sdpMid, (ushort)sdpMlineIndex);
 #endif
@@ -1342,7 +1442,6 @@ namespace PeerConnectionClient.Signalling
             if (_signaller.IsConnected())
             {
                 await _signaller.SignOut();
-                _peers.Clear();
             }
         }
 
@@ -1352,9 +1451,6 @@ namespace PeerConnectionClient.Signalling
         /// <param name="peer">Peer to connect to.</param>
         public void ConnectToPeer(Peer peer)
         {
-            Debug.Assert(peer != null);
-            Debug.Assert(_peerId == -1);
-
             if (_localPeerConnection != null)
             {
                 Debug.WriteLine("[Error] Conductor: We only support connecting to one peer at a time");
@@ -1391,7 +1487,7 @@ namespace PeerConnectionClient.Signalling
         /// Sends SDP message.
         /// </summary>
         /// <param name="description">RTC session description.</param>
-        private void SendSdp(RTCSessionDescription description)
+        private void SendSdp(long participantId, RTCSessionDescription description)
         {
             JsonObject json = null;
 #if ORTCLIB
@@ -1443,17 +1539,18 @@ namespace PeerConnectionClient.Signalling
                 { kSessionDescriptionSdpName, JsonValue.CreateStringValue(description.Sdp) }
             };
 #endif
-            SendMessage(json);
+           
+            SendMessage(participantId, json);
         }
 
         /// <summary>
         /// Helper method to send a message to a peer.
         /// </summary>
         /// <param name="json">Message body.</param>
-        private void SendMessage(IJsonValue json)
+        private void SendMessage(long participantId, IJsonValue json)
         {
             // Don't await, send it async.
-            var task = _signaller.SendToPeer(_peerId, json);
+            var task = _signaller.SendToPeer(participantId, json);
         }
 
         /// <summary>
@@ -1461,7 +1558,7 @@ namespace PeerConnectionClient.Signalling
         /// </summary>
         private async Task SendHangupMessage()
         {
-            await _signaller.SendToPeer(_peerId, "BYE");
+            await _signaller.SendToPeer(0, "BYE");
         }
 
         /// <summary>
@@ -1471,9 +1568,9 @@ namespace PeerConnectionClient.Signalling
         {
             lock (MediaLock)
             {
-                if (_mediaStream != null)
+                if (_localMediaStream != null)
                 {
-                    foreach (MediaVideoTrack videoTrack in _mediaStream.GetVideoTracks())
+                    foreach (MediaVideoTrack videoTrack in _localMediaStream.GetVideoTracks())
                     {
                         videoTrack.Enabled = true;
                     }
@@ -1489,9 +1586,9 @@ namespace PeerConnectionClient.Signalling
         {
             lock (MediaLock)
             {
-                if (_mediaStream != null)
+                if (_localMediaStream != null)
                 {
-                    foreach (MediaVideoTrack videoTrack in _mediaStream.GetVideoTracks())
+                    foreach (MediaVideoTrack videoTrack in _localMediaStream.GetVideoTracks())
                     {
                         videoTrack.Enabled = false;
                     }
@@ -1507,9 +1604,9 @@ namespace PeerConnectionClient.Signalling
         {
             lock (MediaLock)
             {
-                if (_mediaStream != null)
+                if (_localMediaStream != null)
                 {
-                    foreach (MediaAudioTrack audioTrack in _mediaStream.GetAudioTracks())
+                    foreach (MediaAudioTrack audioTrack in _localMediaStream.GetAudioTracks())
                     {
                         audioTrack.Enabled = false;
                     }
@@ -1525,9 +1622,9 @@ namespace PeerConnectionClient.Signalling
         {
             lock (MediaLock)
             {
-                if (_mediaStream != null)
+                if (_localMediaStream != null)
                 {
-                    foreach (MediaAudioTrack audioTrack in _mediaStream.GetAudioTracks())
+                    foreach (MediaAudioTrack audioTrack in _localMediaStream.GetAudioTracks())
                     {
                         audioTrack.Enabled = true;
                     }

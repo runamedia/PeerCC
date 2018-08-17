@@ -29,6 +29,7 @@ static std::map<std::wstring, MEPlayer^> s_PlayerMap;
 
 static Microsoft::WRL::ComPtr<ABI::Windows::Media::IMediaExtensionManager> s_mediaExtensionManager;
 static Microsoft::WRL::ComPtr<ABI::Windows::Foundation::Collections::IMap<HSTRING, IInspectable*>> s_extensionManagerProperties;
+static int i = 0;
 
 void SetupSchemeHandler()
 {
@@ -104,12 +105,11 @@ extern "C"  void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API CreateMediaPlayback(
 	if (nullptr == s_UnityInterfaces)
 		return;
 
-	static int i = 0;
-
 	if (s_DeviceType == kUnityGfxRendererD3D11)
 	{
+		i++;
 		IUnityGraphicsD3D11* d3d = s_UnityInterfaces->Get<IUnityGraphicsD3D11>();
-		MEPlayer^ player = ref new MEPlayer(d3d->GetDevice(), "SharedVideoTexture" + (i++).ToString(), s_extensionManagerProperties);
+		MEPlayer^ player = ref new MEPlayer(d3d->GetDevice(), "SharedVideoTexture" + i.ToString(), s_extensionManagerProperties);
 		s_PlayerMap[playerId] = player;
 	} 
 }
