@@ -354,8 +354,26 @@
     <Compile Include="..\..\..\ClientUnity\Unity\PeerCCUnity\Assets\Scripts\GazeGestureManager.cs">
       <Link>Scripts\GazeGestureManager.cs</Link>
     </Compile>
-    <Compile Include="..\..\..\ClientUnity\Unity\PeerCCUnity\Assets\Scripts\WorldCursor.cs">
+	<Compile Include="..\..\..\ClientUnity\Unity\PeerCCUnity\Assets\Scripts\WorldCursor.cs">
       <Link>Scripts\WorldCursor.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\ClientUnity\Unity\PeerCCUnity\Assets\Scripts\Buttons.cs">
+      <Link>Scripts\Buttons.cs</Link>
+    </Compile>
+	<Compile Include="..\..\..\ClientUnity\Unity\PeerCCUnity\Assets\Scripts\ChooseCamera.cs">
+      <Link>Scripts\ChooseCamera.cs</Link>
+    </Compile>
+	<Compile Include="..\..\..\ClientUnity\Unity\PeerCCUnity\Assets\Scripts\FirstCamera.cs">
+      <Link>Scripts\FirstCamera.cs</Link>
+    </Compile>
+	<Compile Include="..\..\..\ClientUnity\Unity\PeerCCUnity\Assets\Scripts\SecondCamera.cs">
+      <Link>Scripts\SecondCamera.cs</Link>
+    </Compile>
+	<Compile Include="..\..\..\ClientUnity\Unity\PeerCCUnity\Assets\Scripts\ScriptForMove.cs">
+      <Link>Scripts\ScriptForMove.cs</Link>
+    </Compile>
+	<Compile Include="..\..\..\ClientUnity\Unity\PeerCCUnity\Assets\Scripts\ClickButton.cs">
+      <Link>Scripts\ClickButton.cs</Link>
     </Compile>
   </ItemGroup>
   <ItemGroup>

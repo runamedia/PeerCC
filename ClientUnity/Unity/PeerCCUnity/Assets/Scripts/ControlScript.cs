@@ -30,8 +30,8 @@ public class ControlScript : MonoBehaviour
     public uint RemoteTextureWidth = 640;
     public uint RemoteTextureHeight = 480;
 
-    public RawImage LocalVideoImage;
-
+    public GameObject LocalVideoImage;
+    
     public InputField ServerAddressInputField;
     public Button ConnectButton;
     public Button CallButton;
@@ -126,15 +126,17 @@ public class ControlScript : MonoBehaviour
             IntPtr nativeTex = IntPtr.Zero;
             Plugin.GetPrimaryTexture("LocalVideo", LocalTextureWidth, LocalTextureHeight, out nativeTex);
             var primaryPlaybackTexture = Texture2D.CreateExternalTexture((int)LocalTextureWidth, (int)LocalTextureHeight, TextureFormat.BGRA32, false, false, nativeTex);
-            LocalVideoImage.texture = primaryPlaybackTexture;
+            rawImage = LocalVideoImage.GetComponent<RawImage>();
+            rawImage.texture = primaryPlaybackTexture;
+           
         }
     }
 
     private void OnDisable()
     {
-        LocalVideoImage.texture = null;
+        rawImage.texture = null;
         Plugin.ReleaseMediaPlayback("LocalVideo");
-        LocalVideoImage.texture = Texture;
+        rawImage.texture = Texture;
     }
 
 #if false
@@ -697,7 +699,7 @@ public class ControlScript : MonoBehaviour
         }
 #endif
     }
-
+#if !UNITY_EDITOR
     private void Conductor_OnAddRemoteStream(Conductor.Peer peer)
     {
         var task = RunOnUiThread(() =>
@@ -713,7 +715,7 @@ public class ControlScript : MonoBehaviour
             remotePanelCounter++;
             UpdateEvent.WaitOne();
 
-#if !UNITY_EDITOR
+
             var task = RunOnUiThread(() =>
             {
                 lock (this)
@@ -739,7 +741,7 @@ public class ControlScript : MonoBehaviour
             });
         }
 #endif
-#endif
+
     }
 
     private void CreateRemotePanel(string panelName)
@@ -806,18 +808,17 @@ public class ControlScript : MonoBehaviour
         rawImage.material = Material;
         rawImage.texture = Texture;                                     
     }
-    
     private void ChangePositionAndDimensions()
     {
         xPos = 0;
         yPos = 0;
-        xDimensions = xRemoteDimensions / col;
-        yDimensions = yRemoteDimensions / row;
+        //xDimensions = xRemoteDimensions / col;
+        //yDimensions = yRemoteDimensions / row;
 
         for (int i = 0; i < gameObjectList.Count; i++)
         {
             rect = gameObjectList[i].GetComponent<RectTransform>();
-            rect.sizeDelta = new Vector2(xDimensions - 10, yDimensions - 10);
+            rect.sizeDelta = new Vector2(xDimensions, yDimensions);
 
             if (i == 0)
             {
@@ -842,10 +843,10 @@ public class ControlScript : MonoBehaviour
                     yPos -= yRemoteDimensions / row;
                 }
             }
-            rect.anchoredPosition = new Vector2(xPos, yPos);
+            rect.anchoredPosition = new Vector2(xPos, 400);
         }
     }
-
+#endif
     private void CreateMedia(String panelName)
     {
         Plugin.CreateMediaPlayback(panelName);
@@ -858,7 +859,8 @@ public class ControlScript : MonoBehaviour
     private void ReleaseMedia(String panelName)
     {
         Plugin.ReleaseMediaPlayback(panelName);
-    }
+}
+#if !UNITY_EDITOR
     private void Conductor_OnRemoveRemoteStream(Conductor.Peer peer)
     {
         var task = RunOnUiThread(() =>
@@ -869,10 +871,11 @@ public class ControlScript : MonoBehaviour
             }
         });
     }
-
+#endif
+#if !UNITY_EDITOR
     private void Conductor_OnAddLocalStream()
     {
-#if !UNITY_EDITOR
+
         var task = RunOnUiThread(() =>
         {
             lock (this)
@@ -891,10 +894,10 @@ public class ControlScript : MonoBehaviour
                 }
             }
         });
-#endif
-    }
 
-    private static class Plugin
+    }
+#endif
+private static class Plugin
     {
         [DllImport("MediaEngineUWP", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, EntryPoint = "CreateMediaPlayback")]
         internal static extern void CreateMediaPlayback([MarshalAs(UnmanagedType.LPWStr)]string playerId);
