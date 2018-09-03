@@ -30,7 +30,7 @@ public class ControlScript : MonoBehaviour
     public uint RemoteTextureWidth = 640;
     public uint RemoteTextureHeight = 480;
 
-    public GameObject LocalVideoImage;
+    public RawImage LocalVideoImage;
     
     public InputField ServerAddressInputField;
     public Button ConnectButton;
@@ -126,8 +126,7 @@ public class ControlScript : MonoBehaviour
             IntPtr nativeTex = IntPtr.Zero;
             Plugin.GetPrimaryTexture("LocalVideo", LocalTextureWidth, LocalTextureHeight, out nativeTex);
             var primaryPlaybackTexture = Texture2D.CreateExternalTexture((int)LocalTextureWidth, (int)LocalTextureHeight, TextureFormat.BGRA32, false, false, nativeTex);
-            rawImage = LocalVideoImage.GetComponent<RawImage>();
-            rawImage.texture = primaryPlaybackTexture;
+            LocalVideoImage.texture = primaryPlaybackTexture;
            
         }
     }
@@ -173,6 +172,16 @@ public class ControlScript : MonoBehaviour
 #endif
     private void LateUpdate()
     {
+
+
+        if (Input.GetKeyDown("c"))
+        {
+            OnConnectClick();
+        }
+        if (Input.GetKeyDown("v"))
+        {
+            OnCallClick();
+        }
 #if !UNITY_EDITOR
         lock (this)
         {
