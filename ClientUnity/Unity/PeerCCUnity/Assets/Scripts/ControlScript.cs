@@ -1,4 +1,4 @@
-﻿//#define staticPanel
+﻿#define staticPanel
 
 using System.Runtime.InteropServices;
 using System;
@@ -25,25 +25,24 @@ public class ControlScript : MonoBehaviour
 {
     public static ControlScript Instance { get; private set; }
 
-    public uint LocalTextureWidth = 160;
-    public uint LocalTextureHeight = 120;
+    public uint LocalTextureWidth = 640;
+    public uint LocalTextureHeight = 480;
     public uint RemoteTextureWidth = 640;
     public uint RemoteTextureHeight = 480;
 
-    public RawImage LocalVideoImage;
-    
+    public SpriteRenderer LocalVideoImage;
+
     public InputField ServerAddressInputField;
     public Button ConnectButton;
     public Button CallButton;
     public RectTransform PeerContent;
     public GameObject TextItemPreftab;
 
-    public Canvas Canvas;
-    public Material Material;
-    public Texture Texture;
+    public Sprite SpriteTexture;
+    SpriteRenderer spriteRenderer;
 
-    List<GameObject> gameObjectList;
-    List<string> namePanelList;
+    Dictionary<string, GameObject> gameObjectList;
+    List<GameObject> cubeList;
     RawImage rawImage;
 
     RectTransform rect;
@@ -109,8 +108,9 @@ public class ControlScript : MonoBehaviour
     private void Start()
     {
         Instance = this;
-        gameObjectList = new List<GameObject>();
-        namePanelList = new List<string>();
+        gameObjectList = new Dictionary<string, GameObject>();
+        cubeList = new List<GameObject>();
+
 #if !UNITY_EDITOR
         Conductor.Instance.Initialized += Conductor_Initialized;
         Conductor.Instance.Initialize(CoreApplication.MainView.CoreWindow.Dispatcher);
@@ -120,14 +120,13 @@ public class ControlScript : MonoBehaviour
     }
 
     private void OnEnable()
-    {       
+    {
         {
             Plugin.CreateMediaPlayback("LocalVideo");
             IntPtr nativeTex = IntPtr.Zero;
             Plugin.GetPrimaryTexture("LocalVideo", LocalTextureWidth, LocalTextureHeight, out nativeTex);
             var primaryPlaybackTexture = Texture2D.CreateExternalTexture((int)LocalTextureWidth, (int)LocalTextureHeight, TextureFormat.BGRA32, false, false, nativeTex);
-            LocalVideoImage.texture = primaryPlaybackTexture;
-           
+            LocalVideoImage.GetComponent<SpriteRenderer>().sprite = Sprite.Create(primaryPlaybackTexture, new UnityEngine.Rect(0, 0, LocalTextureWidth, LocalTextureHeight), new Vector2(0.5f, 0.5f), 20);
         }
     }
 
@@ -135,13 +134,12 @@ public class ControlScript : MonoBehaviour
     {
         rawImage.texture = null;
         Plugin.ReleaseMediaPlayback("LocalVideo");
-        rawImage.texture = Texture;
     }
 
 #if false
     private void LateUpdate()
     {
-        lock (this)
+        lock (this) 
         {
             if (lateCounter < remotePanelCounter)
             {
@@ -345,14 +343,22 @@ public class ControlScript : MonoBehaviour
                     //    }
                     //}
                     int indexForRemove = 0;
-                    for (int i = 0; i < gameObjectList.Count; i++)
+                    foreach (var item in cubeList)
                     {
-                        if (namePanelList[i] == "Panel-" + command.remotePeer.Id.ToString())
+                        if (gameObjectList.ContainsKey("Panel-" + command.remotePeer.Id.ToString()))
                         {
-                            DestroyObject(gameObjectList[i]);
-                            indexForRemove = i;
+                            DestroyObject(item);
+                            gameObjectList.Remove("Panel-" + command.remotePeer.Id.ToString());
                         }
                     }
+                    //for (int i = 0; i < gameObjectList.Count; i++)
+                    //{
+                    //    if (gameObjectList == "Panel-" + command.remotePeer.Id.ToString())
+                    //    {
+                    //        DestroyObject(gameObjectList[i]);
+                    //        indexForRemove = i;
+                    //    }
+                    //}
                     ReleaseMedia("Panel-" + command.remotePeer.Id.ToString());
 #if !UNITY_EDITOR
                     var task = RunOnUiThread(() =>
@@ -369,28 +375,29 @@ public class ControlScript : MonoBehaviour
                             }
                         }
                     });
-                    gameObjectList.RemoveAt(indexForRemove);
-                    namePanelList.RemoveAt(indexForRemove);
+                    gameObjectList.Remove("Panel-" + command.remotePeer.Id.ToString());
+                    //gameObjectList.RemoveAt(indexForRemove);
+                    //namePanelList.RemoveAt(indexForRemove);
                     RemoveRemotePanel();
 #endif
                 }
                 else if (command.type == CommandType.RemoveAllRemotePanel)
                 {
-                    foreach (var item in namePanelList)
+                    foreach (var item in gameObjectList.Keys)
                     {
                         Plugin.UnloadMediaStreamSource(item);
                         ReleaseMedia(item);
                     }
-                    foreach (var item in gameObjectList)
+                    foreach (var item in cubeList)
                     {
                         DestroyObject(item);
                     }
                     gameObjectList.Clear();
-                    namePanelList.Clear();
+                    cubeList.Clear();
                     row = 0;
                     col = 0;
                     status = Status.Connected;
-                    commandQueue.Add(new Command { type = CommandType.SetConnected});
+                    commandQueue.Add(new Command { type = CommandType.SetConnected });
                 }
             }
         }
@@ -775,9 +782,9 @@ public class ControlScript : MonoBehaviour
         else if (row != col)
         {
             row++;
-        }      
+        }
         AddPanelToList(panelName);
-        ChangePositionAndDimensions();
+        //ChangePositionAndDimensions();
     }
 
     private void RemoveRemotePanel()
@@ -809,13 +816,18 @@ public class ControlScript : MonoBehaviour
 
     private void AddPanelToList(string panelName)
     {
-        gameObjectList.Add(new GameObject(panelName));
-        namePanelList.Add(gameObjectList[gameObjectList.Count - 1].name);
-        gameObjectList[gameObjectList.Count - 1].transform.SetParent(Canvas.transform, false);
-        rawImage = gameObjectList[gameObjectList.Count - 1].AddComponent<RawImage>();
-        rawImage.color = Color.black;
-        rawImage.material = Material;
-        rawImage.texture = Texture;                                     
+        gameObjectList.Add(panelName, new GameObject(panelName));
+        gameObjectList[panelName].AddComponent<SpriteRenderer>();
+        spriteRenderer = gameObjectList[panelName].GetComponent<SpriteRenderer>();
+        spriteRenderer.sprite = SpriteTexture;
+        cubeList.Add(GameObject.CreatePrimitive(PrimitiveType.Cube));
+        gameObjectList[panelName].transform.parent = cubeList[0].transform;
+        cubeList[0].name = panelName;
+        gameObjectList[panelName].transform.localScale = new Vector3(0.03f, 0.04f, 0.51f);
+        gameObjectList[panelName].transform.position = new Vector3(0, 0, 0.505f);
+        gameObjectList[panelName].transform.rotation = new Quaternion(180, 0, 0, 0);
+        cubeList[0].transform.localScale = new Vector3(8, 6, 3);
+        cubeList[0].transform.position = new Vector3(0, 3.5f, 0);   
     }
     private void ChangePositionAndDimensions()
     {
@@ -826,8 +838,7 @@ public class ControlScript : MonoBehaviour
 
         for (int i = 0; i < gameObjectList.Count; i++)
         {
-            rect = gameObjectList[i].GetComponent<RectTransform>();
-            rect.sizeDelta = new Vector2(xDimensions, yDimensions);
+            cubeList[i].transform.localScale = new Vector3(8, 6, 3);
 
             if (i == 0)
             {
@@ -852,7 +863,7 @@ public class ControlScript : MonoBehaviour
                     yPos -= yRemoteDimensions / row;
                 }
             }
-            rect.anchoredPosition = new Vector2(xPos, 400);
+            cubeList[i].transform.position = new Vector3(0, 0, 0);
         }
     }
 #endif
@@ -862,13 +873,14 @@ public class ControlScript : MonoBehaviour
         IntPtr nativeTex = IntPtr.Zero;
         Plugin.GetPrimaryTexture(panelName, RemoteTextureWidth, RemoteTextureHeight, out nativeTex);
         var primaryPlaybackTexture = Texture2D.CreateExternalTexture((int)RemoteTextureWidth, (int)RemoteTextureHeight, TextureFormat.BGRA32, false, false, nativeTex);
-        rawImage.texture = primaryPlaybackTexture;
+        //LocalVideoImage.GetComponent<SpriteRenderer>().sprite = Sprite.Create(primaryPlaybackTexture, new UnityEngine.Rect(0, 0, LocalTextureWidth, LocalTextureHeight), new Vector2(0.5f, 0.5f), 12);
+        spriteRenderer.GetComponent<SpriteRenderer>().sprite = Sprite.Create(primaryPlaybackTexture, new UnityEngine.Rect(0, 0, LocalTextureWidth, LocalTextureHeight), new Vector2(0.5f, 0.5f), 20);
     }
 
     private void ReleaseMedia(String panelName)
     {
         Plugin.ReleaseMediaPlayback(panelName);
-}
+    }
 #if !UNITY_EDITOR
     private void Conductor_OnRemoveRemoteStream(Conductor.Peer peer)
     {
@@ -906,7 +918,7 @@ public class ControlScript : MonoBehaviour
 
     }
 #endif
-private static class Plugin
+    private static class Plugin
     {
         [DllImport("MediaEngineUWP", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, EntryPoint = "CreateMediaPlayback")]
         internal static extern void CreateMediaPlayback([MarshalAs(UnmanagedType.LPWStr)]string playerId);
